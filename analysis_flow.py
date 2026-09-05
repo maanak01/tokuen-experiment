@@ -146,15 +146,17 @@ if len(df) > 0:
         for t in [1, 2, 3, 4]:
             video_type, music_cond = GROUP_MAP[group][t-1]
 
-            buy      = row.get(get_trial_col(df, t, '購入したいと思う'), np.nan)
-            interest = row.get(get_trial_col(df, t, '興味がある'), np.nan)
-            nobuy_r  = row.get(get_trial_col(df, t, '買う気はしない'), np.nan)
-            memory   = row.get(get_trial_col(df, t, '頭に残っている'), np.nan)
-            cogfit   = row.get(get_trial_col(df, t, '雰囲気が合っていた'), np.nan)
-            vid_val  = row.get(get_trial_col(df, t, '映像を見てどのような気持ち'), np.nan)
-            vid_aro  = row.get(get_trial_col(df, t, '映像を見てどのくらい興奮'), np.nan)
-            mus_val  = row.get(get_trial_col(df, t, '音楽を聴いてどのような気持ち'), np.nan)
-            mus_aro  = row.get(get_trial_col(df, t, '音楽を聴いてどのくらい興奮'), np.nan)
+            buy       = row.get(get_trial_col(df, t, '購入したいと思う'), np.nan)
+            interest  = row.get(get_trial_col(df, t, '興味がある'), np.nan)
+            nobuy_r   = row.get(get_trial_col(df, t, '買う気はしない'), np.nan)
+            memory    = row.get(get_trial_col(df, t, '頭に残っている'), np.nan)
+            mem_mood  = row.get(get_trial_col(df, t, 'この映像の雰囲気がまだ続いている'), np.nan)
+            mem_world = row.get(get_trial_col(df, t, 'この映像の世界観にまだいるような'), np.nan)
+            cogfit    = row.get(get_trial_col(df, t, '雰囲気が合っていた'), np.nan)
+            vid_val   = row.get(get_trial_col(df, t, '映像を見てどのような気持ち'), np.nan)
+            vid_aro   = row.get(get_trial_col(df, t, '映像を見てどのくらい興奮'), np.nan)
+            mus_val   = row.get(get_trial_col(df, t, '音楽を聴いてどのような気持ち'), np.nan)
+            mus_aro   = row.get(get_trial_col(df, t, '音楽を聴いてどのくらい興奮'), np.nan)
 
             # WTPの文字列・欠損値処理
             wtp_raw = row.get(get_trial_col(df, t, 'いくらまで払えますか'), np.nan)
@@ -173,6 +175,8 @@ if len(df) > 0:
                 'video_type':     video_type,
                 'music_cond':     music_cond,
                 'memory':         memory,
+                'mem_mood':       mem_mood,
+                'mem_world':      mem_world,
                 'buy':            buy,
                 'interest':       interest,
                 'nobuy_r':        nobuy_r,
@@ -184,6 +188,7 @@ if len(df) > 0:
                 'music_arousal':  mus_aro,
             }
             record['purchase_intent'] = np.nanmean([buy, interest, nobuy_r])
+            record['memory_score'] = np.nanmean([memory, mem_mood, mem_world])
             records.append(record)
 
 long_df = pd.DataFrame(records)
@@ -194,13 +199,25 @@ print(f"  WTP欠損値数: {long_df['wtp'].isna().sum()}件")
 # Step6: 購買意欲スケールの平均算出 + Cronbach's α
 # ============================================
 if len(long_df) > 0:
+    # 購買意欲のCronbach's α
     alpha_data = long_df[['buy', 'interest', 'nobuy_r']].dropna()
     if len(alpha_data) > 2:
         alpha_val, alpha_ci = pg.cronbach_alpha(data=alpha_data)
-        print(f"\nStep6: Cronbach's α = {alpha_val:.3f}（目標 ≥ 0.7）")
+        print(f"\nStep6: 購買意欲 Cronbach's α = {alpha_val:.3f}（目標 ≥ 0.7）")
         print("  項目を1つ除外したときのα:")
         for col in ['buy', 'interest', 'nobuy_r']:
             sub = alpha_data.drop(columns=[col])
+            a, _ = pg.cronbach_alpha(data=sub)
+            print(f"    {col}を除外: α = {a:.3f}")
+
+    # 余韻のCronbach's α
+    mem_alpha_data = long_df[['memory', 'mem_mood', 'mem_world']].dropna()
+    if len(mem_alpha_data) > 2:
+        mem_alpha_val, _ = pg.cronbach_alpha(data=mem_alpha_data)
+        print(f"\n       余韻 Cronbach's α = {mem_alpha_val:.3f}（目標 ≥ 0.7）")
+        print("  項目を1つ除外したときのα:")
+        for col in ['memory', 'mem_mood', 'mem_world']:
+            sub = mem_alpha_data.drop(columns=[col])
             a, _ = pg.cronbach_alpha(data=sub)
             print(f"    {col}を除外: α = {a:.3f}")
 
@@ -260,7 +277,7 @@ print("\nStep10: 分析開始")
 
 dvs = {
     'purchase_intent': '購買意欲',
-    'memory':          '余韻持続',
+    'memory_score':    '余韻持続（3問平均）',
     'wtp':             'WTP',
     'cogfit':          'cognitive fit（操作チェック）',
 }
@@ -322,8 +339,8 @@ if len(long_df) > 0:
 # ============================================
 if len(long_df) > 0:
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    plot_dvs    = ['purchase_intent', 'memory', 'wtp']
-    plot_labels = ['購買意欲', '余韻持続', 'WTP（円）']
+    plot_dvs    = ['purchase_intent', 'memory_score', 'wtp']
+    plot_labels = ['購買意欲', '余韻持続（3問平均）', 'WTP（円）']
 
     for ax, dv, label in zip(axes, plot_dvs, plot_labels):
         summary = long_df.groupby(['video_type', 'music_cond'])[dv].agg(['mean', 'sem']).reset_index()
