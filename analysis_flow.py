@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v5
+# 特別演習I 分析フロー v6
 # 映像種類(2) × 音楽条件(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -387,3 +387,106 @@ if len(long_df) > 0:
     plt.savefig('results.png', dpi=150)
     plt.show()
     print("\nStep11: 結果グラフ保存 → results.png")
+# ============================================
+# Step12: WTPアンカリング検証
+# ============================================
+print("\nStep12: WTPアンカリング検証")
+
+if len(long_df) > 0 and 'wtp' in long_df.columns:
+
+    # --- 分析① 試行順序 × 音楽条件のrm ANOVA ---
+    # 注意：WTPの収束はアンカリング以外に以下の可能性も排除できない
+    # - 疲労効果：後半になるほど回答が雑になる
+    # - 学習効果：実験に慣れてきて回答が安定してくる
+    # したがって「アンカリングの可能性を示唆する」探索的分析として位置づける
+    print("\n--- ① 試行順序 × 音楽条件のrm ANOVA（WTP） ---")
+    print("  ※ 収束の原因はアンカリング・疲労効果・学習効果の可能性があり区別できない")
+    print("  ※ 探索的分析として位置づける")
+    wtp_data = long_df[['participant_id', 'trial', 'music_cond', 'wtp']].dropna()
+    wtp_data = wtp_data.copy()
+    wtp_data['wtp_log'] = np.log1p(wtp_data['wtp'])  # 対数変換
+
+    try:
+        aov_anchor = pg.rm_anova(
+            data=wtp_data,
+            dv='wtp_log',
+            within=['trial', 'music_cond'],
+            subject='participant_id',
+            detailed=True
+        )
+        print(aov_anchor[['Source', 'F', 'p-unc', 'np2']].to_string(index=False))
+
+        # 交互作用の確認
+        interaction_p = aov_anchor[
+            aov_anchor['Source'].str.contains('trial.*music_cond|music_cond.*trial')
+        ]['p-unc'].values
+
+        if len(interaction_p) > 0:
+            if interaction_p[0] < 0.05:
+                print(f"\n  → 交互作用有意（p={interaction_p[0]:.3f}）")
+                print("  → 試行が進むにつれて条件間の差が縮小 → アンカリングの証拠")
+            else:
+                print(f"\n  → 交互作用非有意（p={interaction_p[0]:.3f}）")
+                print("  → 条件間の差は試行を通じて安定 → アンカリングの影響は小さい")
+
+    except Exception as e:
+        print(f"  ANOVA実行エラー: {e}")
+
+    # --- 分析② 試行1との差分 ---
+    print("\n--- ② 試行1との差分（アンカリングの大きさを可視化） ---")
+
+    # 試行1のWTPを取得
+    trial1_wtp = long_df[long_df['trial'] == 1][['participant_id', 'music_cond', 'wtp']].copy()
+    trial1_wtp = trial1_wtp.rename(columns={'wtp': 'wtp_trial1'})
+
+    # 試行2〜4に試行1のWTPをマージ
+    wtp_diff = long_df[long_df['trial'] > 1][['participant_id', 'trial', 'music_cond', 'wtp']].copy()
+    wtp_diff = wtp_diff.merge(
+        trial1_wtp[['participant_id', 'wtp_trial1']],
+        on='participant_id',
+        how='left'
+    )
+    wtp_diff['diff_from_trial1'] = wtp_diff['wtp'] - wtp_diff['wtp_trial1']
+
+    # 差分の記述統計
+    diff_summary = wtp_diff.groupby(['trial', 'music_cond'])['diff_from_trial1'].agg(
+        ['mean', 'std']
+    ).reset_index()
+    print(diff_summary.to_string(index=False))
+
+    # 差分の可視化
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 左：試行ごとのWTP平均（調和/不調和）
+    ax1 = axes[0]
+    wtp_by_trial = long_df.groupby(['trial', 'music_cond'])['wtp'].mean().reset_index()
+    for cond, color, label in zip(['con', 'dis'], ['#E07B54', '#5B8DB8'], ['調和', '不調和']):
+        sub = wtp_by_trial[wtp_by_trial['music_cond'] == cond]
+        ax1.plot(sub['trial'], sub['wtp'], marker='o', color=color, label=label, linewidth=2)
+    ax1.set_title('試行ごとのWTP平均')
+    ax1.set_xlabel('試行')
+    ax1.set_ylabel('WTP（円）')
+    ax1.set_xticks([1, 2, 3, 4])
+    ax1.legend()
+
+    # 右：試行1との差分
+    ax2 = axes[1]
+    for cond, color, label in zip(['con', 'dis'], ['#E07B54', '#5B8DB8'], ['調和', '不調和']):
+        sub = diff_summary[diff_summary['music_cond'] == cond]
+        ax2.errorbar(
+            sub['trial'], sub['mean'], yerr=sub['std'],
+            marker='o', color=color, label=label, linewidth=2, capsize=5
+        )
+    ax2.axhline(y=0, color='gray', linestyle='--', linewidth=1)
+    ax2.set_title('試行1からの差分（アンカリング確認）')
+    ax2.set_xlabel('試行')
+    ax2.set_ylabel('WTP差分（円）')
+    ax2.set_xticks([2, 3, 4])
+    ax2.legend()
+
+    plt.tight_layout()
+    plt.savefig('anchoring_check.png', dpi=150)
+    plt.show()
+    print("\nグラフ保存: anchoring_check.png")
+    print("差分が0に近づいていく → アンカリングの影響あり")
+    print("差分がランダムにばらつく → アンカリングの影響なし")
