@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v7
+# 特別演習I 分析フロー v8
 # 映像種類(2) × 音楽条件(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -364,8 +364,12 @@ if len(long_df) > 0:
 # ============================================
 if len(long_df) > 0:
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    plot_dvs    = ['purchase_intent', 'memory_score', 'wtp']
-    plot_labels = ['購買意欲', '余韻持続（3問平均）', 'WTP（円）']
+    # α結果に応じてmemory_scoreを含めるか決定
+    plot_dvs    = ['purchase_intent', 'wtp']
+    plot_labels = ['購買意欲', 'WTP（円）']
+    if USE_MEMORY_SCORE:
+        plot_dvs.insert(1, 'memory_score')
+        plot_labels.insert(1, '余韻持続（3問平均）')
 
     for ax, dv, label in zip(axes, plot_dvs, plot_labels):
         summary = long_df.groupby(['video_type', 'music_cond'])[dv].agg(['mean', 'sem']).reset_index()
@@ -394,46 +398,54 @@ print("\nStep12: WTPアンカリング検証")
 
 if len(long_df) > 0 and 'wtp' in long_df.columns:
 
-    # --- 分析① 試行順序 × 音楽条件のrm ANOVA ---
-    # 注意：WTPの収束はアンカリング以外に以下の可能性も排除できない
+    # --- 分析① 混合効果モデル（試行順序 × 音楽条件）---
+    # rm ANOVAを使わない理由：
+    # 各参加者の各試行には調和か不調和どちらかのデータしかない（セルが不完全）
+    # 2要因rm ANOVAは「各参加者が全セルのデータを持つ」ことが前提のため不適切
+    # 混合効果モデルは不完全なセル構造でも対応できる
+    #
+    # 注意：WTPの変化はアンカリング以外に以下の可能性も排除できない
     # - 疲労効果：後半になるほど回答が雑になる
     # - 学習効果：実験に慣れてきて回答が安定してくる
-    # したがって「アンカリングの可能性を示唆する」探索的分析として位置づける
-    print("\n--- ① 試行順序 × 音楽条件のrm ANOVA（WTP） ---")
+    # したがって「アンカリングを含む順序効果の可能性を示唆する」探索的分析として位置づける
+    print("\n--- ① 混合効果モデル（試行順序 × 音楽条件）（WTP） ---")
     print("  ※ 収束の原因はアンカリング・疲労効果・学習効果の可能性があり区別できない")
-    print("  ※ 探索的分析として位置づける")
+    print("  ※ 探索的補助分析として位置づける")
+
     wtp_data = long_df[['participant_id', 'trial', 'music_cond', 'wtp']].dropna()
     wtp_data = wtp_data.copy()
-    wtp_data['wtp_log'] = np.log1p(wtp_data['wtp'])  # 対数変換
+    wtp_data['wtp_log'] = np.log1p(wtp_data['wtp'])
+    wtp_data['music_cond_num'] = (wtp_data['music_cond'] == 'con').astype(int)  # con=1, dis=0
 
     try:
-        aov_anchor = pg.rm_anova(
+        import statsmodels.formula.api as smf
+
+        # 混合効果モデル
+        # wtp_log ~ trial + music_cond + trial:music_cond + (1|participant_id)
+        model = smf.mixedlm(
+            "wtp_log ~ trial * music_cond_num",
             data=wtp_data,
-            dv='wtp_log',
-            within=['trial', 'music_cond'],
-            subject='participant_id',
-            detailed=True
+            groups=wtp_data["participant_id"]
         )
-        print(aov_anchor[['Source', 'F', 'p-unc', 'np2']].to_string(index=False))
+        result = model.fit(reml=True)
+        print(result.summary())
 
-        # 交互作用の確認
-        interaction_p = aov_anchor[
-            aov_anchor['Source'].str.contains('trial.*music_cond|music_cond.*trial')
-        ]['p-unc'].values
+        # 交互作用係数の確認
+        interaction_coef = result.params.get('trial:music_cond_num', None)
+        interaction_p = result.pvalues.get('trial:music_cond_num', None)
 
-        if len(interaction_p) > 0:
-            if interaction_p[0] < 0.05:
-                print(f"\n  → 交互作用有意（p={interaction_p[0]:.3f}）")
-                print("  → 試行順序によって条件間の差が変化している")
-                print("  → アンカリングなどの順序効果が生じた可能性を示唆")
+        if interaction_p is not None:
+            print(f"\n  交互作用（trial × music_cond）: β={interaction_coef:.4f}, p={interaction_p:.3f}")
+            if interaction_p < 0.05:
+                print("  → 試行順序によって音楽条件のWTPへの効果が変化している")
+                print("  → アンカリングを含む順序効果の可能性と整合的")
                 print("  ※ 疲労効果・学習効果等の可能性も排除できない")
             else:
-                print(f"\n  → 交互作用非有意（p={interaction_p[0]:.3f}）")
-                print("  → 条件間の差は試行を通じて安定")
-                print("  → 順序効果が明確なパターンは見られない")
+                print("  → 試行順序による音楽条件の効果の変化は確認されなかった")
+                print("  → 順序効果を示唆する明確なパターンは見られない")
 
     except Exception as e:
-        print(f"  ANOVA実行エラー: {e}")
+        print(f"  混合効果モデル実行エラー: {e}")
 
     # --- 分析② 試行1との差分（補助分析）---
     # 主分析（①）を補完する記述・可視化
@@ -494,6 +506,7 @@ if len(long_df) > 0 and 'wtp' in long_df.columns:
     plt.savefig('anchoring_check.png', dpi=150)
     plt.show()
     print("\nグラフ保存: anchoring_check.png")
-    print("差分が0に近づいていく → アンカリングと整合的なパターン")
-    print("差分がランダムにばらつく → そのようなパターンは明確ではない")
-    print("※ 補助分析として主分析①と合わせて解釈すること")
+    print("差分が0に近づいていく → アンカリングなどの順序効果と整合的なパターン")
+    print("差分が明確に収束しない → アンカリングを示唆する明確なパターンは確認できない")
+    print("※ いずれもアンカリングの有無を直接証明するものではない")
+    print("※ 主分析①（混合効果モデル）と合わせて解釈すること")
