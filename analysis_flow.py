@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v3
+# 特別演習I 分析フロー v5
 # 映像種類(2) × 音楽条件(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -212,14 +212,25 @@ if len(long_df) > 0:
 
     # 余韻のCronbach's α
     mem_alpha_data = long_df[['memory', 'mem_mood', 'mem_world']].dropna()
+    MEMORY_ALPHA_THRESHOLD = 0.7  # 目安。内容的妥当性も考慮して判断すること
+    USE_MEMORY_SCORE = False  # αの結果で上書きされる
+
     if len(mem_alpha_data) > 2:
         mem_alpha_val, _ = pg.cronbach_alpha(data=mem_alpha_data)
-        print(f"\n       余韻 Cronbach's α = {mem_alpha_val:.3f}（目標 ≥ 0.7）")
+        print(f"\n       余韻 Cronbach's α = {mem_alpha_val:.3f}（目安 ≥ {MEMORY_ALPHA_THRESHOLD}）")
         print("  項目を1つ除外したときのα:")
         for col in ['memory', 'mem_mood', 'mem_world']:
             sub = mem_alpha_data.drop(columns=[col])
             a, _ = pg.cronbach_alpha(data=sub)
             print(f"    {col}を除外: α = {a:.3f}")
+
+        if mem_alpha_val >= MEMORY_ALPHA_THRESHOLD:
+            USE_MEMORY_SCORE = True
+            print(f"\n  → α ≥ {MEMORY_ALPHA_THRESHOLD}：3問を一次元として平均（memory_score）を従属変数に使用")
+        else:
+            USE_MEMORY_SCORE = False
+            print(f"\n  → α < {MEMORY_ALPHA_THRESHOLD}：3問を別々に分析（Bonferroni補正 α=0.017）")
+            print("  ※ 内容的妥当性も踏まえて最終判断すること")
 
 # ============================================
 # Step7: 予備評定の確認
@@ -275,12 +286,26 @@ if len(long_df) > 0:
 # ============================================
 print("\nStep10: 分析開始")
 
-dvs = {
-    'purchase_intent': '購買意欲',
-    'memory_score':    '余韻持続（3問平均）',
-    'wtp':             'WTP',
-    'cogfit':          'cognitive fit（操作チェック）',
-}
+# α結果に応じて余韻の分析方針を決定
+if USE_MEMORY_SCORE:
+    # α ≥ 0.7：3問平均を使う
+    dvs = {
+        'purchase_intent': '購買意欲',
+        'memory_score':    '余韻持続（3問平均）',
+        'wtp':             'WTP',
+        'cogfit':          'cognitive fit（操作チェック）',
+    }
+else:
+    # α < 0.7：3問を個別に分析
+    dvs = {
+        'purchase_intent': '購買意欲',
+        'memory':          '余韻（記憶）',
+        'mem_mood':        '余韻（感情持続）',
+        'mem_world':       '余韻（没入持続）',
+        'wtp':             'WTP',
+        'cogfit':          'cognitive fit（操作チェック）',
+    }
+    print("\n⚠ 余韻を3問個別に分析します。有意水準はBonferroni補正でα=0.017を適用。")
 
 if len(long_df) > 0:
     for dv, label in dvs.items():
