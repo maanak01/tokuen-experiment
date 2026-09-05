@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v2
+# 特別演習I 分析フロー v3
 # 映像種類(2) × 音楽条件(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -21,7 +21,6 @@ import jaconv
 # ============================================
 # GoogleスプレッドシートからCSVとしてエクスポートして読み込む
 # df = pd.read_csv('responses.csv')
-# 以下はテスト用ダミーデータで動作確認
 df = pd.DataFrame()  # 実際はCSV読み込みに差し替え
 
 print("Step1: データ読み込み完了")
@@ -32,20 +31,19 @@ print(f"参加者数（除外前）: {len(df)}")
 # ============================================
 def normalize_col(s):
     """列名の表記ゆれを吸収する"""
-    s = jaconv.z2h(s, kana=False, ascii=True, digit=True)  # 全角英数記号→半角
-    s = s.strip()           # 前後スペース削除
-    s = ' '.join(s.split()) # 連続スペースを1つに統一
+    s = jaconv.z2h(s, kana=False, ascii=True, digit=True)
+    s = s.strip()
+    s = ' '.join(s.split())
     return s
 
 def normalize_df_columns(df):
     """
-    DataFrameの全列名を正規化し、重複列を処理する。
+    全列名を正規化し、重複列を処理する。
     Googleフォームのバグで同じ列名が複数出ることがある。
     その場合は最初の列だけを残して重複を削除する。
     """
     df.columns = [normalize_col(c) for c in df.columns]
 
-    # 重複列の処理：同じ列名が複数あったら最初の列だけ残す
     seen = {}
     new_cols = []
     for i, col in enumerate(df.columns):
@@ -53,12 +51,10 @@ def normalize_df_columns(df):
             seen[col] = i
             new_cols.append(col)
         else:
-            # 重複列を検出したらログに出す
             print(f"  ⚠ 重複列を検出・削除: '{col}'（{i+1}列目）")
             new_cols.append(f'__duplicate_{i}__')
 
     df.columns = new_cols
-    # __duplicate__列を削除
     df = df.loc[:, ~df.columns.str.startswith('__duplicate__')]
     return df
 
@@ -73,7 +69,6 @@ def get_trial_col(df, trial, keyword):
         return None
     return matches[0]
 
-# 列名を正規化（重複列も処理）
 if len(df) > 0:
     df = normalize_df_columns(df)
     print("\n正規化後の列名一覧:")
@@ -81,13 +76,13 @@ if len(df) > 0:
         print(f"  {c}")
 
 # ============================================
-# Step2: グループIDから条件ラベル付与
+# Step2: グループIDから条件ラベル付与の定義
 # ============================================
 GROUP_MAP = {
     #         試行1              試行2              試行3              試行4
     # 映像：A=ポジ①滝, B=ポジ②夕日, C=メラ①ベンチ, D=メラ②紅葉（'はそれぞれ不調和）
     # 条件の組み合わせ（pos/mel × con/dis）はG1aとG2aで同じ
-    # 異なるのは刺激の提示順（どの映像を試行1に使うか）→順序効果の統制が目的
+    # 異なるのは刺激の提示順→順序効果の統制が目的
     'G1a': [('pos','con'), ('mel','dis'), ('pos','dis'), ('mel','con')],  # A  C' B' D
     'G1b': [('mel','con'), ('pos','dis'), ('mel','dis'), ('pos','con')],  # C  A' D' B
     'G2a': [('pos','con'), ('mel','dis'), ('pos','dis'), ('mel','con')],  # B  D' A' C
@@ -105,7 +100,6 @@ print("\nStep2: グループIDと条件ラベルの定義完了")
 # ============================================
 ATTENTION_ANSWER = 4
 
-before = len(df)
 excluded_ids = []
 
 if len(df) > 0:
@@ -157,8 +151,6 @@ if len(df) > 0:
             nobuy_r  = row.get(get_trial_col(df, t, '買う気はしない'), np.nan)
             memory   = row.get(get_trial_col(df, t, '頭に残っている'), np.nan)
             cogfit   = row.get(get_trial_col(df, t, '雰囲気が合っていた'), np.nan)
-
-            # 予備評定
             vid_val  = row.get(get_trial_col(df, t, '映像を見てどのような気持ち'), np.nan)
             vid_aro  = row.get(get_trial_col(df, t, '映像を見てどのくらい興奮'), np.nan)
             mus_val  = row.get(get_trial_col(df, t, '音楽を聴いてどのような気持ち'), np.nan)
@@ -217,7 +209,6 @@ if len(long_df) > 0:
 # ============================================
 if len(long_df) > 0 and 'video_valence' in long_df.columns:
     print("\nStep7: 予備評定の確認")
-
     pos_vval = long_df[long_df['video_type']=='pos']['video_valence'].mean()
     mel_vval = long_df[long_df['video_type']=='mel']['video_valence'].mean()
     print(f"  映像valence: ポジ={pos_vval:.2f}, メラ={mel_vval:.2f}")
@@ -228,7 +219,24 @@ if len(long_df) > 0 and 'video_valence' in long_df.columns:
     print(f"  音楽valence: 調和={con_mval:.2f}, 不調和={dis_mval:.2f}")
 
 # ============================================
-# Step8: 分布の確認（ANOVA前）
+# Step8: 記述統計
+# ============================================
+if len(long_df) > 0:
+    print("\nStep8: 記述統計")
+    dvs_desc = ['purchase_intent', 'memory', 'wtp', 'cogfit']
+
+    desc = long_df.groupby(['video_type', 'music_cond'])[dvs_desc].agg(
+        ['mean', 'std', 'min', 'max', 'count']
+    )
+    print(desc.to_string())
+
+    # WTPの外れ値確認
+    print(f"\n  WTP最大値: {long_df['wtp'].max():.0f}円")
+    print(f"  WTP最小値: {long_df['wtp'].min():.0f}円")
+    print(f"  WTP中央値: {long_df['wtp'].median():.0f}円")
+
+# ============================================
+# Step9: 分布の確認（ANOVA前）
 # ============================================
 if len(long_df) > 0:
     fig, axes = plt.subplots(1, 4, figsize=(16, 4))
@@ -243,12 +251,12 @@ if len(long_df) > 0:
     plt.tight_layout()
     plt.savefig('distributions.png', dpi=150)
     plt.show()
-    print("\nStep8: 分布確認グラフ保存 → distributions.png")
+    print("\nStep9: 分布確認グラフ保存 → distributions.png")
 
 # ============================================
-# Step9: 分析
+# Step10: 分析
 # ============================================
-print("\nStep9: 分析開始")
+print("\nStep10: 分析開始")
 
 dvs = {
     'purchase_intent': '購買意欲',
@@ -265,7 +273,6 @@ if len(long_df) > 0:
         data = long_df[['participant_id', 'video_type', 'music_cond', dv]].dropna()
 
         if dv == 'cogfit':
-            # 操作チェック：対応ありt検定
             con = data[data['music_cond'] == 'con'].set_index('participant_id')[dv]
             dis = data[data['music_cond'] == 'dis'].set_index('participant_id')[dv]
             common = con.index.intersection(dis.index)
@@ -275,7 +282,6 @@ if len(long_df) > 0:
 
         else:
             if dv == 'wtp':
-                # WTPは結果によらず一律対数変換（右歪みが確実なため）
                 stat, p_norm = stats.shapiro(data[dv].dropna())
                 print(f"  Shapiro-Wilk検定（記録用）: W={stat:.3f}, p={p_norm:.3f}")
                 print(f"  → WTPは一律で対数変換（log(WTP+1)）を適用")
@@ -293,7 +299,6 @@ if len(long_df) > 0:
                 )
                 print(aov[['Source', 'F', 'p-unc', 'np2']].to_string(index=False))
 
-                # 交互作用が有意なら単純主効果（Bonferroni補正：α=0.025）
                 interaction_p = aov[aov['Source'].str.contains('video_type.*music_cond|music_cond.*video_type')]['p-unc'].values
                 if len(interaction_p) > 0 and interaction_p[0] < 0.05:
                     print(f"\n  → 交互作用有意（p={interaction_p[0]:.3f}）")
@@ -313,7 +318,7 @@ if len(long_df) > 0:
                 print(f"  ANOVA実行エラー（データ不足の可能性）: {e}")
 
 # ============================================
-# Step10: 可視化（変換前スコアで表示）
+# Step11: 可視化（変換前スコアで表示）
 # ============================================
 if len(long_df) > 0:
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -339,4 +344,4 @@ if len(long_df) > 0:
     plt.tight_layout()
     plt.savefig('results.png', dpi=150)
     plt.show()
-    print("\nStep10: 結果グラフ保存 → results.png")
+    print("\nStep11: 結果グラフ保存 → results.png")
