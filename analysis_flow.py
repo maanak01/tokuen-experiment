@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v6
+# 特別演習I 分析フロー v7
 # 映像種類(2) × 音楽条件(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -424,16 +424,22 @@ if len(long_df) > 0 and 'wtp' in long_df.columns:
         if len(interaction_p) > 0:
             if interaction_p[0] < 0.05:
                 print(f"\n  → 交互作用有意（p={interaction_p[0]:.3f}）")
-                print("  → 試行が進むにつれて条件間の差が縮小 → アンカリングの証拠")
+                print("  → 試行順序によって条件間の差が変化している")
+                print("  → アンカリングなどの順序効果が生じた可能性を示唆")
+                print("  ※ 疲労効果・学習効果等の可能性も排除できない")
             else:
                 print(f"\n  → 交互作用非有意（p={interaction_p[0]:.3f}）")
-                print("  → 条件間の差は試行を通じて安定 → アンカリングの影響は小さい")
+                print("  → 条件間の差は試行を通じて安定")
+                print("  → 順序効果が明確なパターンは見られない")
 
     except Exception as e:
         print(f"  ANOVA実行エラー: {e}")
 
-    # --- 分析② 試行1との差分 ---
-    print("\n--- ② 試行1との差分（アンカリングの大きさを可視化） ---")
+    # --- 分析② 試行1との差分（補助分析）---
+    # 主分析（①）を補完する記述・可視化
+    # 「WTPが実際にどのように変化したか」を直感的に確認する目的
+    print("\n--- ② 試行1との差分（補助分析：WTPの変化を可視化） ---")
+    print("  ※ 主分析①の補完。統計的検定ではなく記述・可視化が目的")
 
     # 試行1のWTPを取得
     trial1_wtp = long_df[long_df['trial'] == 1][['participant_id', 'music_cond', 'wtp']].copy()
@@ -488,5 +494,6 @@ if len(long_df) > 0 and 'wtp' in long_df.columns:
     plt.savefig('anchoring_check.png', dpi=150)
     plt.show()
     print("\nグラフ保存: anchoring_check.png")
-    print("差分が0に近づいていく → アンカリングの影響あり")
-    print("差分がランダムにばらつく → アンカリングの影響なし")
+    print("差分が0に近づいていく → アンカリングと整合的なパターン")
+    print("差分がランダムにばらつく → そのようなパターンは明確ではない")
+    print("※ 補助分析として主分析①と合わせて解釈すること")
