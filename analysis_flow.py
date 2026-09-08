@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v10
+# 特別演習I 分析フロー v11
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -283,6 +283,39 @@ if len(long_df) > 0:
     pos_varo = long_df[long_df['video_valence']=='pos']['vid_aro_check'].mean()
     mel_varo = long_df[long_df['video_valence']=='mel']['vid_aro_check'].mean()
     print(f"\n  映像arousal（探索的）: ポジ={pos_varo:.2f}, メラ={mel_varo:.2f}")
+
+# ============================================
+# Step7-2: demand認知チェック
+# ============================================
+# 参加者が実験の意図に気づいていたかを確認する
+# 「音楽が購買意欲に影響するか」を正確に推測した参加者を特定する
+if len(df) > 0:
+    print("\nStep7-2: demand認知チェック")
+
+    demand_col = [c for c in df.columns if '実験の目的' in c]
+    if demand_col:
+        demand_col = demand_col[0]
+        print(f"  回答一覧（目視確認が必要）:")
+        for idx, ans in df[demand_col].items():
+            print(f"    参加者{idx}: {ans}")
+
+        # キーワードによる自動判定（参考値）
+        # 「音楽」「購買」「買う」等が含まれる回答を抽出
+        keywords = ['音楽', '購買', '買う', '購入', '値段', '金額', 'BGM']
+        aware_ids = []
+        for idx, ans in df[demand_col].items():
+            ans_str = str(ans)
+            hit = sum(1 for k in keywords if k in ans_str)
+            if hit >= 2:  # 2つ以上のキーワードが含まれる場合
+                aware_ids.append(idx)
+
+        print(f"\n  実験意図に気づいた可能性のある参加者: {len(aware_ids)}名")
+        if aware_ids:
+            print(f"    参加者ID: {aware_ids}")
+        print("  ※ 自動判定は参考値。必ず回答内容を目視確認すること")
+        print("  ※ 除外するかどうかは目視確認後に判断する")
+    else:
+        print("  ⚠ demand認知チェック列が見つかりません")
 
 # ============================================
 # Step8: 記述統計
