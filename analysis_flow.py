@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v11
+# 特別演習I 分析フロー v12
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -259,6 +259,11 @@ if len(long_df) > 0:
     print(f"  → {'✅ 意図通り（ポジ > メラ）' if pos_mval > mel_mval else '⚠ 要確認'}")
 
     # cognitive fitの操作チェック：congruent > incongruent
+    # 注意：cognitive fitで差が出ることは両義的
+    # (1) 操作が知覚された証拠（操作成功）
+    # (2) 参加者が条件操作の存在に気づいていた証拠（demand effectのリスク）
+    # 参加者は演習の実験協力という文脈のため操作に気づく可能性が高い
+    # この両義性をlimitationsに明記する
     con_cf = long_df[long_df['congruency']=='con']['cogfit'].mean()
     inc_cf = long_df[long_df['congruency']=='inc']['cogfit'].mean()
     con_data = long_df[long_df['congruency']=='con'].set_index('participant_id')['cogfit']
@@ -299,21 +304,38 @@ if len(df) > 0:
         for idx, ans in df[demand_col].items():
             print(f"    参加者{idx}: {ans}")
 
-        # キーワードによる自動判定（参考値）
-        # 「音楽」「購買」「買う」等が含まれる回答を抽出
-        keywords = ['音楽', '購買', '買う', '購入', '値段', '金額', 'BGM']
-        aware_ids = []
+        # 判定1：実験目的の推測（音楽・購買への言及）
+        purpose_keywords = ['音楽', '購買', '買う', '購入', '値段', '金額', 'BGM', '支払']
+        purpose_aware_ids = []
         for idx, ans in df[demand_col].items():
             ans_str = str(ans)
-            hit = sum(1 for k in keywords if k in ans_str)
-            if hit >= 2:  # 2つ以上のキーワードが含まれる場合
-                aware_ids.append(idx)
+            hit = sum(1 for k in purpose_keywords if k in ans_str)
+            if hit >= 2:
+                purpose_aware_ids.append(idx)
 
-        print(f"\n  実験意図に気づいた可能性のある参加者: {len(aware_ids)}名")
-        if aware_ids:
-            print(f"    参加者ID: {aware_ids}")
-        print("  ※ 自動判定は参考値。必ず回答内容を目視確認すること")
+        print(f"\n  【判定1】実験目的を推測していた可能性: {len(purpose_aware_ids)}名")
+        if purpose_aware_ids:
+            print(f"    参加者ID: {purpose_aware_ids}")
+
+        # 判定2：条件操作への気づき（意図的な不調和への言及）
+        # 参加者が学生・実験協力という文脈のため操作に気づく可能性が高い
+        manip_keywords = ['合ってない', '合っていない', '意図的', 'わざと', '違和感',
+                          '不自然', 'ミスマッチ', '変えて', '組み合わせ', '合わない']
+        manip_aware_ids = []
+        for idx, ans in df[demand_col].items():
+            ans_str = str(ans)
+            hit = sum(1 for k in manip_keywords if k in ans_str)
+            if hit >= 1:
+                manip_aware_ids.append(idx)
+
+        print(f"\n  【判定2】条件操作に気づいていた可能性: {len(manip_aware_ids)}名")
+        if manip_aware_ids:
+            print(f"    参加者ID: {manip_aware_ids}")
+
+        print("\n  ※ 自動判定は参考値。必ず回答内容を目視確認すること")
         print("  ※ 除外するかどうかは目視確認後に判断する")
+        print("  ※ 参加者は演習の実験協力という文脈のため操作に気づく可能性が高い")
+        print("  ※ 気づいた参加者の割合を報告し、limitationsに記載する")
     else:
         print("  ⚠ demand認知チェック列が見つかりません")
 
