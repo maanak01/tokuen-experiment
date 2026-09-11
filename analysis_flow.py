@@ -1,5 +1,5 @@
 # ============================================
-# 特別演習I 分析フロー v12
+# 特別演習I 分析フロー v13
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
 
@@ -188,6 +188,11 @@ if len(df) > 0:
                 'interest':       interest,
                 'nobuy_r':        nobuy_r,
                 'wtp':            wtp,
+                # cogfit: 変数名は歴史的経緯によるもの
+                # 実際に測定しているのは perceived congruency（知覚された一致度）
+                # Vessey & Galletta (1991) の cognitive fit 理論とは別概念
+                # Vesseyのfitは「課題の性質×情報の表現形式」の適合であり
+                # 本研究のfitは「映像のvalence×音楽のvalence」の感情的一致である
                 'cogfit':         cogfit,
                 'vid_val_check':  vid_val,     # 操作チェック用
                 'vid_aro_check':  vid_aro,
@@ -258,8 +263,9 @@ if len(long_df) > 0:
     print(f"  音楽valence: ポジ={pos_mval:.2f}, メラ={mel_mval:.2f}")
     print(f"  → {'✅ 意図通り（ポジ > メラ）' if pos_mval > mel_mval else '⚠ 要確認'}")
 
-    # cognitive fitの操作チェック：congruent > incongruent
-    # 注意：cognitive fitで差が出ることは両義的
+    # perceived congruency（知覚された一致度）の操作チェック：congruent > incongruent
+    # ※変数名cogfitは歴史的経緯。Vessey (1991)のcognitive fit理論とは別概念
+    # 注意：perceived congruencyで差が出ることは両義的
     # (1) 操作が知覚された証拠（操作成功）
     # (2) 参加者が条件操作の存在に気づいていた証拠（demand effectのリスク）
     # 参加者は演習の実験協力という文脈のため操作に気づく可能性が高い
@@ -271,7 +277,7 @@ if len(long_df) > 0:
     common = con_data.index.intersection(inc_data.index)
     if len(common) > 1:
         t_stat, p_val = stats.ttest_rel(con_data[common], inc_data[common])
-        print(f"\n  cognitive fit操作チェック:")
+        print(f"\n  perceived congruency操作チェック:")
         print(f"  congruent M={con_cf:.2f} vs incongruent M={inc_cf:.2f}")
         print(f"  対応ありt検定: t={t_stat:.3f}, p={p_val:.3f} {'*' if p_val < 0.05 else 'n.s.'}")
 
@@ -362,7 +368,7 @@ if len(long_df) > 0:
 # ============================================
 if len(long_df) > 0:
     plot_cols = ['purchase_intent', 'wtp', 'cogfit']
-    plot_labels_hist = ['購買意欲', 'WTP（円）', 'cognitive fit']
+    plot_labels_hist = ['購買意欲', 'WTP（円）', 'perceived congruency']
     if USE_MEMORY_SCORE:
         plot_cols.insert(1, 'memory_score')
         plot_labels_hist.insert(1, '余韻持続（3問平均）')
