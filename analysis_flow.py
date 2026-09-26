@@ -1,6 +1,13 @@
 # ============================================
-# 特別演習I 分析フロー v13
+# 特別演習I 分析フロー v14
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
+# ============================================
+# v14の変更点
+#   1. GROUP_MAP を修正（v13は試行2・4の条件が誤っていた）
+#      研究計画書の「グループ別提示順」表を正として作り直した
+#   2. MATERIAL_ORDER を追加（実験実施時にどのmp4を流すかの対応表）
+#   3. verify_group_map() を追加（実行時に設計要件を自己検証）
+#   4. 余韻と購買意欲の相関を Step7 に追加（9/24決定：探索的に検討）
 # ============================================
 
 # ============================================
@@ -74,24 +81,101 @@ if len(df) > 0:
 # Step2: グループIDから条件ラベル付与の定義
 # ============================================
 # 実験デザイン：映像valence × 音楽valenceの2×2
-# congruent  = 映像と音楽のvalenceが一致
-# incongruent = 映像と音楽のvalenceが不一致
+#   congruent   = 映像と音楽のvalenceが一致
+#   incongruent = 映像と音楽のvalenceが不一致
+#
+# 条件記号（研究計画書の「条件の記号」表に対応）
+#   A / A' = ポジティブ①（滝）         ／ 調和・不調和
+#   B / B' = ポジティブ②（夕日）       ／ 調和・不調和
+#   C / C' = メランコリック①（ベンチ） ／ 調和・不調和
+#   D / D' = メランコリック②（雨林）   ／ 調和・不調和
+#
+# 注意：分析上はどの映像素材かを区別しない（valenceのみを扱う）ため、
+# G1aとG2a、G1bとG2b、G3aとG4a、G3bとG4b は同一のタプル列になる。
+# これは設計通りであり誤りではない。8グループに分けているのは
+# 各条件を各順番位置に均等に配置するためであり、使用する素材の違いは
+# 下の MATERIAL_ORDER が保持している。
+
 GROUP_MAP = {
-    #         試行1                  試行2                  試行3                  試行4
-    # video_valence: pos=ポジティブ, mel=メランコリック
-    # music_valence: pos=ポジティブ, mel=メランコリック
-    # congruency: con=congruent, inc=incongruent
-    'G1a': [('pos','pos','con'), ('mel','mel','con'), ('pos','mel','inc'), ('mel','pos','inc')],
-    'G1b': [('mel','mel','con'), ('pos','pos','con'), ('mel','pos','inc'), ('pos','mel','inc')],
-    'G2a': [('pos','pos','con'), ('mel','mel','con'), ('pos','mel','inc'), ('mel','pos','inc')],
-    'G2b': [('mel','mel','con'), ('pos','pos','con'), ('mel','pos','inc'), ('pos','mel','inc')],
-    'G3a': [('pos','mel','inc'), ('mel','pos','inc'), ('pos','pos','con'), ('mel','mel','con')],
-    'G3b': [('mel','pos','inc'), ('pos','mel','inc'), ('mel','mel','con'), ('pos','pos','con')],
-    'G4a': [('pos','mel','inc'), ('mel','pos','inc'), ('pos','pos','con'), ('mel','mel','con')],
-    'G4b': [('mel','pos','inc'), ('pos','mel','inc'), ('mel','mel','con'), ('pos','pos','con')],
+    #         試行1                  試行2                  試行3                  試行4         記号
+    'G1a': [('pos','pos','con'), ('mel','pos','inc'), ('pos','mel','inc'), ('mel','mel','con')],  # A   C'  B'  D
+    'G1b': [('mel','mel','con'), ('pos','mel','inc'), ('mel','pos','inc'), ('pos','pos','con')],  # C   A'  D'  B
+    'G2a': [('pos','pos','con'), ('mel','pos','inc'), ('pos','mel','inc'), ('mel','mel','con')],  # B   D'  A'  C
+    'G2b': [('mel','mel','con'), ('pos','mel','inc'), ('mel','pos','inc'), ('pos','pos','con')],  # D   B'  C'  A
+    'G3a': [('pos','mel','inc'), ('mel','mel','con'), ('pos','pos','con'), ('mel','pos','inc')],  # A'  C   B   D'
+    'G3b': [('mel','pos','inc'), ('pos','pos','con'), ('mel','mel','con'), ('pos','mel','inc')],  # C'  A   D   B'
+    'G4a': [('pos','mel','inc'), ('mel','mel','con'), ('pos','pos','con'), ('mel','pos','inc')],  # B'  D   A   C'
+    'G4b': [('mel','pos','inc'), ('pos','pos','con'), ('mel','mel','con'), ('pos','mel','inc')],  # D'  B   C   A'
 }
 
-print("\nStep2: グループIDと条件ラベルの定義完了")
+# 実験実施用：どの素材（mp4）をどの順で流すか
+# 分析には使わないが、実施時の確認と GROUP_MAP の照合に用いる
+MATERIAL_ORDER = {
+    'G1a': ['A',  "C'", "B'", 'D' ],
+    'G1b': ['C',  "A'", "D'", 'B' ],
+    'G2a': ['B',  "D'", "A'", 'C' ],
+    'G2b': ['D',  "B'", "C'", 'A' ],
+    'G3a': ["A'", 'C',  'B',  "D'"],
+    'G3b': ["C'", 'A',  'D',  "B'"],
+    'G4a': ["B'", 'D',  'A',  "C'"],
+    'G4b': ["D'", 'B',  'C',  "A'"],
+}
+
+
+def verify_group_map():
+    """
+    GROUP_MAP が設計要件を満たすかを実行時に検証する。
+    MATERIAL_ORDER から導出した条件と GROUP_MAP を照合するため、
+    どちらかを編集して片方を直し忘れた場合に検出できる。
+    """
+    VIDEO_VAL = {'A': 'pos', 'B': 'pos', 'C': 'mel', 'D': 'mel'}
+
+    def decode(sym):
+        base, is_inc = sym[0], sym.endswith("'")
+        v = VIDEO_VAL[base]
+        m = ('pos' if v == 'mel' else 'mel') if is_inc else v
+        return (v, m, 'inc' if is_inc else 'con')
+
+    all_ok = True
+
+    # 照合：MATERIAL_ORDER から導出した条件と GROUP_MAP が一致するか
+    for g, syms in MATERIAL_ORDER.items():
+        derived = [decode(s) for s in syms]
+        if derived != GROUP_MAP[g]:
+            print(f"  ✗ {g}: GROUP_MAPとMATERIAL_ORDERが不一致")
+            print(f"      GROUP_MAP    : {GROUP_MAP[g]}")
+            print(f"      MATERIAL由来 : {derived}")
+            all_ok = False
+
+    # 各グループの設計要件
+    for g, conds in GROUP_MAP.items():
+        n_con = sum(1 for c in conds if c[2] == 'con')
+        vids = [c[0] for c in conds]
+        alt = all(vids[i] != vids[i + 1] for i in range(3))
+        bases = [s[0] for s in MATERIAL_ORDER[g]]
+        uniq = len(set(bases)) == 4
+        if not (n_con == 2 and alt and uniq):
+            print(f"  ✗ {g}: 調和{n_con}回 / ポジメラ交互={alt} / 映像4種={uniq}")
+            all_ok = False
+
+    # 各試行位置で congruency と video valence が均等か
+    for t in range(4):
+        cs = [GROUP_MAP[g][t][2] for g in GROUP_MAP]
+        vs = [GROUP_MAP[g][t][0] for g in GROUP_MAP]
+        if cs.count('con') != 4 or vs.count('pos') != 4:
+            print(f"  ✗ 試行{t+1}: congruency con={cs.count('con')} / video pos={vs.count('pos')}")
+            all_ok = False
+
+    if all_ok:
+        print("Step2: GROUP_MAP検証 → ✅ 全要件を満たしています")
+        print("  各グループ：調和2回・不調和2回／ポジとメラが交互／映像4種を1回ずつ")
+        print("  各試行位置：congruency・video valenceともに4対4で均等")
+    else:
+        print("Step2: ⚠ GROUP_MAPに問題があります。実験実施前に必ず修正すること")
+    return all_ok
+
+
+verify_group_map()
 
 # ============================================
 # Step3: attention checkで除外（2問）
@@ -149,7 +233,7 @@ if len(df) > 0:
         if group not in GROUP_MAP:
             continue
         for t in [1, 2, 3, 4]:
-            video_val, music_val, congruency = GROUP_MAP[group][t-1]
+            video_val, music_val, congruency = GROUP_MAP[group][t - 1]
 
             memory    = row.get(get_trial_col(df, t, '頭に残っている'), np.nan)
             mem_mood  = row.get(get_trial_col(df, t, 'この映像の雰囲気がまだ続いている'), np.nan)
@@ -178,6 +262,7 @@ if len(df) > 0:
                 'participant_id': idx,
                 'group':          group,
                 'trial':          t,
+                'material':       MATERIAL_ORDER[group][t - 1],  # どの素材を使ったか（記録用）
                 'video_valence':  video_val,   # pos / mel
                 'music_valence':  music_val,   # pos / mel
                 'congruency':     congruency,  # con / inc
@@ -190,9 +275,7 @@ if len(df) > 0:
                 'wtp':            wtp,
                 # cogfit: 変数名は歴史的経緯によるもの
                 # 実際に測定しているのは perceived congruency（知覚された一致度）
-                # Vessey & Galletta (1991) の cognitive fit 理論とは別概念
-                # Vesseyのfitは「課題の性質×情報の表現形式」の適合であり
-                # 本研究のfitは「映像のvalence×音楽のvalence」の感情的一致である
+                # Vessey & Galletta (1991) の cognitive fit 理論とは対象・測定方法が異なる
                 'cogfit':         cogfit,
                 'vid_val_check':  vid_val,     # 操作チェック用
                 'vid_aro_check':  vid_aro,
@@ -205,7 +288,8 @@ if len(df) > 0:
 
 long_df = pd.DataFrame(records)
 print(f"\nStep5: ロング形式変換完了（{len(long_df)}行）")
-print(f"  WTP欠損値数: {long_df['wtp'].isna().sum()}件")
+if len(long_df) > 0:
+    print(f"  WTP欠損値数: {long_df['wtp'].isna().sum()}件")
 
 # ============================================
 # Step6: Cronbach's α
@@ -252,28 +336,29 @@ if len(long_df) > 0:
     print("\nStep7: 操作チェック")
 
     # 映像valenceの確認：ポジ映像 > メラ映像になっているか
-    pos_vval = long_df[long_df['video_valence']=='pos']['vid_val_check'].mean()
-    mel_vval = long_df[long_df['video_valence']=='mel']['vid_val_check'].mean()
+    pos_vval = long_df[long_df['video_valence'] == 'pos']['vid_val_check'].mean()
+    mel_vval = long_df[long_df['video_valence'] == 'mel']['vid_val_check'].mean()
     print(f"  映像valence: ポジ={pos_vval:.2f}, メラ={mel_vval:.2f}")
     print(f"  → {'✅ 意図通り（ポジ > メラ）' if pos_vval > mel_vval else '⚠ 要確認'}")
 
     # 音楽valenceの確認：ポジ音楽 > メラ音楽になっているか
-    pos_mval = long_df[long_df['music_valence']=='pos']['mus_val_check'].mean()
-    mel_mval = long_df[long_df['music_valence']=='mel']['mus_val_check'].mean()
+    pos_mval = long_df[long_df['music_valence'] == 'pos']['mus_val_check'].mean()
+    mel_mval = long_df[long_df['music_valence'] == 'mel']['mus_val_check'].mean()
     print(f"  音楽valence: ポジ={pos_mval:.2f}, メラ={mel_mval:.2f}")
     print(f"  → {'✅ 意図通り（ポジ > メラ）' if pos_mval > mel_mval else '⚠ 要確認'}")
 
     # perceived congruency（知覚された一致度）の操作チェック：congruent > incongruent
-    # ※変数名cogfitは歴史的経緯。Vessey (1991)のcognitive fit理論とは別概念
+    # ※これは仮説検証ではなく操作が知覚されたかの確認であるため、
+    #   Step10の仮説検証における多重比較の補正対象には含めない（α=.05のまま）
     # 注意：perceived congruencyで差が出ることは両義的
-    # (1) 操作が知覚された証拠（操作成功）
-    # (2) 参加者が条件操作の存在に気づいていた証拠（demand effectのリスク）
-    # 参加者は演習の実験協力という文脈のため操作に気づく可能性が高い
-    # この両義性をlimitationsに明記する
-    con_cf = long_df[long_df['congruency']=='con']['cogfit'].mean()
-    inc_cf = long_df[long_df['congruency']=='inc']['cogfit'].mean()
-    con_data = long_df[long_df['congruency']=='con'].set_index('participant_id')['cogfit']
-    inc_data = long_df[long_df['congruency']=='inc'].set_index('participant_id')['cogfit']
+    #   (1) 操作が知覚された証拠（操作成功）
+    #   (2) 参加者が条件操作の存在に気づいていた証拠（demand effectのリスク）
+    #   参加者は演習の実験協力という文脈のため操作に気づく可能性が高い
+    #   この両義性をlimitationsに明記する
+    con_cf = long_df[long_df['congruency'] == 'con']['cogfit'].mean()
+    inc_cf = long_df[long_df['congruency'] == 'inc']['cogfit'].mean()
+    con_data = long_df[long_df['congruency'] == 'con'].set_index('participant_id')['cogfit']
+    inc_data = long_df[long_df['congruency'] == 'inc'].set_index('participant_id')['cogfit']
     common = con_data.index.intersection(inc_data.index)
     if len(common) > 1:
         t_stat, p_val = stats.ttest_rel(con_data[common], inc_data[common])
@@ -291,15 +376,51 @@ if len(long_df) > 0:
         print(f"  → 相関は低い（r<.3）→ 交絡の影響は小さいと考えられる")
 
     # arousalは探索的に把握
-    pos_varo = long_df[long_df['video_valence']=='pos']['vid_aro_check'].mean()
-    mel_varo = long_df[long_df['video_valence']=='mel']['vid_aro_check'].mean()
+    pos_varo = long_df[long_df['video_valence'] == 'pos']['vid_aro_check'].mean()
+    mel_varo = long_df[long_df['video_valence'] == 'mel']['vid_aro_check'].mean()
     print(f"\n  映像arousal（探索的）: ポジ={pos_varo:.2f}, メラ={mel_varo:.2f}")
+
+# ============================================
+# Step7-1: 余韻と購買意欲の関係（探索的検討）
+# ============================================
+# 本研究の仮説は2つに分けている
+#   仮説1：congruentな音楽環境では余韻が持続する
+#   仮説2：congruentな音楽環境では購買意欲が高い
+# 「余韻が購買意欲を生む」という媒介関係は仮説として立てておらず、
+# 本Stepでは両者の相関を記述的に報告するにとどめる。
+# N=24では媒介分析の検出力が不足するため、媒介の検証は今後の課題とする。
+if len(long_df) > 0:
+    print("\nStep7-1: 余韻と購買意欲の関係（探索的検討）")
+
+    mem_col = 'memory_score' if USE_MEMORY_SCORE else None
+
+    if mem_col:
+        pair = long_df[[mem_col, 'purchase_intent']].dropna()
+        if len(pair) > 2:
+            r_mp = pair.corr().loc[mem_col, 'purchase_intent']
+            print(f"  余韻（3問平均） × 購買意欲: r={r_mp:.3f}（n={len(pair)}試行）")
+    else:
+        print("  ※ 余韻のαが基準を下回ったため、3項目それぞれと購買意欲の相関を出す")
+        for col, lab in [('memory', '記憶'), ('mem_mood', '感情持続'), ('mem_world', '没入持続')]:
+            pair = long_df[[col, 'purchase_intent']].dropna()
+            if len(pair) > 2:
+                r_mp = pair.corr().loc[col, 'purchase_intent']
+                print(f"  余韻（{lab}） × 購買意欲: r={r_mp:.3f}（n={len(pair)}試行）")
+
+    # WTPとの関係も併せて記述
+    if mem_col:
+        pair_w = long_df[[mem_col, 'wtp']].dropna()
+        if len(pair_w) > 2:
+            r_mw = pair_w.corr().loc[mem_col, 'wtp']
+            print(f"  余韻（3問平均） × WTP:     r={r_mw:.3f}（n={len(pair_w)}試行）")
+
+    print("  ※ これは記述的な相関であり、媒介関係を示すものではない")
+    print("  ※ 同一参加者の複数試行を含むため、独立性の仮定は満たしていない")
 
 # ============================================
 # Step7-2: demand認知チェック
 # ============================================
 # 参加者が実験の意図に気づいていたかを確認する
-# 「音楽が購買意欲に影響するか」を正確に推測した参加者を特定する
 if len(df) > 0:
     print("\nStep7-2: demand認知チェック")
 
@@ -324,7 +445,6 @@ if len(df) > 0:
             print(f"    参加者ID: {purpose_aware_ids}")
 
         # 判定2：条件操作への気づき（意図的な不調和への言及）
-        # 参加者が学生・実験協力という文脈のため操作に気づく可能性が高い
         manip_keywords = ['合ってない', '合っていない', '意図的', 'わざと', '違和感',
                           '不自然', 'ミスマッチ', '変えて', '組み合わせ', '合わない']
         manip_aware_ids = []
@@ -363,6 +483,15 @@ if len(long_df) > 0:
     print(f"  WTP最小値: {long_df['wtp'].min():.0f}円")
     print(f"  WTP中央値: {long_df['wtp'].median():.0f}円")
 
+    # グループごとの人数（設計通り割り振れているかの確認）
+    print("\n  グループごとの参加者数:")
+    gcount = long_df.groupby('group')['participant_id'].nunique()
+    for g in ['G1a','G1b','G2a','G2b','G3a','G3b','G4a','G4b']:
+        n = gcount.get(g, 0)
+        print(f"    {g}: {n}名")
+    if gcount.nunique() > 1:
+        print("  ⚠ グループ間で人数が不均等です。カウンターバランスが崩れている可能性あり")
+
 # ============================================
 # Step9: 分布の確認（ANOVA前）
 # ============================================
@@ -373,7 +502,7 @@ if len(long_df) > 0:
         plot_cols.insert(1, 'memory_score')
         plot_labels_hist.insert(1, '余韻持続（3問平均）')
 
-    fig, axes = plt.subplots(1, len(plot_cols), figsize=(4*len(plot_cols), 4))
+    fig, axes = plt.subplots(1, len(plot_cols), figsize=(4 * len(plot_cols), 4))
     if len(plot_cols) == 1:
         axes = [axes]
     for ax, dv, label in zip(axes, plot_cols, plot_labels_hist):
@@ -432,7 +561,7 @@ if len(long_df) > 0:
             )
             print(aov[['Source', 'F', 'p-unc', 'np2']].to_string(index=False))
 
-            # Step1：音楽条件（music_valence）の主効果（仮説の直接検証）
+            # Step1：音楽valenceの主効果（仮説の直接検証）
             music_p = aov[aov['Source'] == 'music_valence']['p-unc'].values
             if len(music_p) > 0:
                 pos_m = data[data['music_valence'] == 'pos'][dv].mean()
@@ -450,16 +579,25 @@ if len(long_df) > 0:
                 print(f"\n  【Step2】映像valenceの主効果: p={video_p[0]:.3f} {sig}")
                 print(f"    ポジ映像 M={pos_v:.2f} vs メラ映像 M={mel_v:.2f}")
 
-            # Step3：交互作用（映像×音楽のvalenceの組み合わせ効果）
-            interaction_p = aov[aov['Source'].str.contains('video_valence.*music_valence|music_valence.*video_valence')]['p-unc'].values
+            # Step3：交互作用（= congruencyの効果に相当）
+            interaction_p = aov[aov['Source'].str.contains(
+                'video_valence.*music_valence|music_valence.*video_valence')]['p-unc'].values
             if len(interaction_p) > 0:
                 sig = '*' if interaction_p[0] < 0.05 else 'n.s.'
                 print(f"\n  【Step3】交互作用（映像valence × 音楽valence）: p={interaction_p[0]:.3f} {sig}")
 
+                # 参考：congruent / incongruent の平均
+                con_m = long_df[long_df['congruency'] == 'con'][dv].mean()
+                inc_m = long_df[long_df['congruency'] == 'inc'][dv].mean()
+                print(f"    参考 congruent M={con_m:.2f} vs incongruent M={inc_m:.2f}")
+
                 # Step4：交互作用が有意なら単純主効果（Bonferroni補正：α=0.025）
+                # 2回比較するため .05/2 = .025
                 if interaction_p[0] < 0.05:
-                    print(f"  → congruent条件とincongruent条件で効果が異なる可能性")
+                    print(f"  → 音楽valenceの効果が映像valenceによって異なる可能性")
                     print(f"  【Step4】単純主効果（Bonferroni補正 α=0.025）")
+                    print(f"  ※ 2種類の不調和（メラ映像×ポジ音楽／ポジ映像×メラ音楽）が")
+                    print(f"     同じ効果を持つとは限らない。差の大きさの違いに注目する")
                     for vtype in ['pos', 'mel']:
                         label_v = 'ポジティブ映像' if vtype == 'pos' else 'メランコリック映像'
                         sub = data[data['video_valence'] == vtype]
@@ -469,7 +607,9 @@ if len(long_df) > 0:
                         if len(common) > 1:
                             t_stat, p_val = stats.ttest_rel(pos_mus[common], mel_mus[common])
                             sig = '*' if p_val < 0.025 else 'n.s.'
-                            print(f"    {label_v}: ポジ音楽M={pos_mus.mean():.2f} vs メラ音楽M={mel_mus.mean():.2f}, p={p_val:.3f} {sig}")
+                            diff = pos_mus.mean() - mel_mus.mean()
+                            print(f"    {label_v}: ポジ音楽M={pos_mus.mean():.2f} vs メラ音楽M={mel_mus.mean():.2f}"
+                                  f" (差={diff:+.2f}), p={p_val:.3f} {sig}")
 
         except Exception as e:
             print(f"  ANOVA実行エラー（データ不足の可能性）: {e}")
@@ -484,7 +624,7 @@ if len(long_df) > 0:
         plot_dvs.insert(1, 'memory_score')
         plot_labels.insert(1, '余韻持続（3問平均）')
 
-    fig, axes = plt.subplots(1, len(plot_dvs), figsize=(5*len(plot_dvs), 5))
+    fig, axes = plt.subplots(1, len(plot_dvs), figsize=(5 * len(plot_dvs), 5))
     if len(plot_dvs) == 1:
         axes = [axes]
 
@@ -520,8 +660,7 @@ if len(long_df) > 0 and 'wtp' in long_df.columns:
     # rm ANOVAを使わない理由：
     # 各参加者の各試行にはcongruent/incongruentどちらかのデータしかない（セルが不完全）
     # 混合効果モデルは不完全なセル構造でも対応できる
-    # 注意：WTPの収束はアンカリング以外に疲労効果・学習効果の可能性も排除できない
-    # 探索的補助分析として位置づける
+    # 注意：WTPの変化はアンカリング以外に疲労効果・学習効果の可能性も排除できない
     print("\n--- 主分析：混合効果モデル（試行順序 × congruency）---")
     print("  ※ 探索的補助分析。アンカリング・疲労効果・学習効果の可能性を区別できない")
 
