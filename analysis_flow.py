@@ -1,13 +1,21 @@
 # ============================================
-# 特別演習I 分析フロー v14
+# 特別演習I 分析フロー v15
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
+# v15の変更点（9/27）
+#   1. 事前の感情測定（baseline mood / arousal）を追加
+#      - Step5 で participant単位の値として保持
+#      - Step7-0 として操作チェックの補強に使用
+#        （映像視聴後のvalence/arousalとの差分で感情誘発の方向と大きさを確認）
+#      - Step7-1 で各従属変数との相関を探索的に確認
+#      - ANCOVAによる統制は行わない（被験者内計画で個人差は既に除去済み、
+#        N=24で自由度を消費すると検出力が落ちるため）
+#
 # v14の変更点
 #   1. GROUP_MAP を修正（v13は試行2・4の条件が誤っていた）
-#      研究計画書の「グループ別提示順」表を正として作り直した
 #   2. MATERIAL_ORDER を追加（実験実施時にどのmp4を流すかの対応表）
 #   3. verify_group_map() を追加（実行時に設計要件を自己検証）
-#   4. 余韻と購買意欲の相関を Step7 に追加（9/24決定：探索的に検討）
+#   4. 余韻と購買意欲の相関を Step7-1 に追加（9/24決定：探索的に検討）
 # ============================================
 
 # ============================================
@@ -71,6 +79,18 @@ def get_trial_col(df, trial, keyword):
         return None
     return matches[0]
 
+def get_col(df, keyword):
+    """試行番号を持たない列（基本属性・事前測定など）をキーワードで取得"""
+    matches = [c for c in df.columns if keyword in c]
+    if len(matches) == 0:
+        print(f"  ⚠ 列が見つかりません: {keyword}")
+        return None
+    if len(matches) > 1:
+        print(f"  ⚠ 複数の列が一致しました: {matches}")
+        return None
+    return matches[0]
+
+
 if len(df) > 0:
     df = normalize_df_columns(df)
     print("\n正規化後の列名一覧:")
@@ -120,6 +140,33 @@ MATERIAL_ORDER = {
     'G4a': ["B'", 'D',  'A',  "C'"],
     'G4b': ["D'", 'B',  'C',  "A'"],
 }
+
+
+def resolve_aov_cols(aov):
+    """
+    pingouinのバージョン差を吸収して、p値と効果量の列名を返す。
+    0.5系: 'p-unc' / 'np2'
+    0.6系: 'p_unc' / 'ng2'（2要因のときは一般化イータ二乗）
+    """
+    p_col = next((c for c in ['p-unc', 'p_unc', 'p-GG-corr', 'p_GG_corr'] if c in aov.columns), None)
+    e_col = next((c for c in ['np2', 'ng2', 'n2'] if c in aov.columns), None)
+    return p_col, e_col
+
+
+def get_source_p(aov, source_name, p_col):
+    """Source列が完全一致する行のp値を返す（無ければNone）"""
+    hit = aov[aov['Source'] == source_name]
+    if len(hit) == 0 or p_col is None:
+        return None
+    return float(hit[p_col].values[0])
+
+
+def get_interaction_p(aov, p_col):
+    """交互作用行のp値を返す。Source名は 'A * B' の形式"""
+    hit = aov[aov['Source'].str.contains(r'\*', regex=True)]
+    if len(hit) == 0 or p_col is None:
+        return None
+    return float(hit[p_col].values[0])
 
 
 def verify_group_map():
@@ -228,10 +275,18 @@ if len(df) > 0:
     group_col = [c for c in df.columns if 'グループID' in c]
     group_col = group_col[0] if group_col else None
 
+    # 事前の感情測定（実験開始前・参加者ごとに1つ）
+    base_mood_col = get_col(df, '今の気分')
+    base_aro_col  = get_col(df, '今の興奮状態')
+
     for idx, row in df.iterrows():
         group = row.get(group_col, '') if group_col else ''
         if group not in GROUP_MAP:
             continue
+
+        base_mood = row.get(base_mood_col, np.nan) if base_mood_col else np.nan
+        base_aro  = row.get(base_aro_col,  np.nan) if base_aro_col  else np.nan
+
         for t in [1, 2, 3, 4]:
             video_val, music_val, congruency = GROUP_MAP[group][t - 1]
 
@@ -282,7 +337,13 @@ if len(df) > 0:
                 'mus_val_check':  mus_val,
                 'mus_aro_check':  mus_aro,
                 'liking':         liking,      # 映像への好意度（交絡変数）
+                # 事前の感情測定（全試行で同じ値。参加者のベースライン）
+                'base_mood':      base_mood,
+                'base_arousal':   base_aro,
             }
+            # 映像視聴後の評定とベースラインの差分（感情誘発の方向と大きさ）
+            record['vid_val_shift'] = (vid_val - base_mood) if pd.notna(vid_val) and pd.notna(base_mood) else np.nan
+            record['vid_aro_shift'] = (vid_aro - base_aro)  if pd.notna(vid_aro) and pd.notna(base_aro)  else np.nan
             record['purchase_intent'] = np.nanmean([buy, interest, nobuy_r])
             records.append(record)
 
@@ -328,6 +389,53 @@ if len(long_df) > 0:
             USE_MEMORY_SCORE = False
             print(f"\n  → α < {MEMORY_ALPHA_THRESHOLD}：3問を個別に分析（Bonferroni補正 α=0.017）")
             print("  ※ 内容的妥当性も踏まえて最終判断すること")
+
+# ============================================
+# Step7-0: 事前の感情測定と感情誘発の確認
+# ============================================
+# 実験開始前に測定したベースライン（気分・興奮状態）を報告し、
+# 映像視聴後の評定との差分から感情誘発の方向と大きさを確認する。
+#
+# 位置づけ：操作チェックの補強
+#   Step7の「ポジ映像 vs メラ映像」の比較はベースラインを持たないため、
+#   「どちらの方向にどれだけ動いたか」が言えない。
+#   事前測定との差分を見ることで、感情誘発が実際に起きたかを直接示せる。
+#
+# ANCOVAによる統制は行わない：
+#   被験者内計画のため個人差はrm ANOVAで既に除去されており、
+#   N=24で共変量を入れると自由度を消費して検出力がさらに落ちるため。
+if len(long_df) > 0 and 'base_mood' in long_df.columns:
+    print("\nStep7-0: 事前の感情測定と感情誘発の確認")
+
+    # ベースラインの記述統計（参加者単位）
+    base = long_df.groupby('participant_id')[['base_mood', 'base_arousal']].first()
+    print(f"  事前の気分     : M={base['base_mood'].mean():.2f}, SD={base['base_mood'].std():.2f}, "
+          f"range={base['base_mood'].min():.0f}-{base['base_mood'].max():.0f}")
+    print(f"  事前の興奮状態 : M={base['base_arousal'].mean():.2f}, SD={base['base_arousal'].std():.2f}, "
+          f"range={base['base_arousal'].min():.0f}-{base['base_arousal'].max():.0f}")
+
+    # 感情誘発の方向と大きさ（ベースラインからの変化量）
+    print("\n  映像視聴後のベースラインからの変化量:")
+    for vtype, lab in [('pos', 'ポジティブ映像'), ('mel', 'メランコリック映像')]:
+        sub = long_df[long_df['video_valence'] == vtype]
+        dv_ = sub['vid_val_shift'].mean()
+        da_ = sub['vid_aro_shift'].mean()
+        print(f"    {lab}: valence {dv_:+.2f} / arousal {da_:+.2f}")
+
+    pos_shift = long_df[long_df['video_valence'] == 'pos']['vid_val_shift'].mean()
+    mel_shift = long_df[long_df['video_valence'] == 'mel']['vid_val_shift'].mean()
+    if pd.notna(pos_shift) and pd.notna(mel_shift):
+        ok_pos = pos_shift > 0
+        ok_mel = mel_shift < 0
+        print(f"\n    ポジ映像でvalence上昇: {'✅' if ok_pos else '⚠ 上昇していない'}")
+        print(f"    メラ映像でvalence下降: {'✅' if ok_mel else '⚠ 下降していない'}")
+        if ok_pos and ok_mel:
+            print("    → 感情誘発は意図した方向に働いたと考えられる")
+        else:
+            print("    → 感情誘発が意図通りでない可能性。limitationsに記載すること")
+
+    print("\n  ※ ベースラインは全試行で共通のため、条件間の比較には影響しない")
+    print("  ※ 差分は記述的な確認であり、統計的検定は行わない")
 
 # ============================================
 # Step7: 操作チェック（valence/arousal）
@@ -417,6 +525,23 @@ if len(long_df) > 0:
     print("  ※ これは記述的な相関であり、媒介関係を示すものではない")
     print("  ※ 同一参加者の複数試行を含むため、独立性の仮定は満たしていない")
 
+    # --- 事前の感情と各従属変数の相関（探索的）---
+    # 実験前の気分が良かった人ほど購買意欲が高いか等を確認する。
+    # 感情ヒューリスティック（Slovic et al., 2002）の枠組みと整合するかの傍証。
+    if 'base_mood' in long_df.columns:
+        print("\n  事前の感情と各従属変数の相関（探索的）:")
+        dv_list = [('purchase_intent', '購買意欲'), ('wtp', 'WTP')]
+        if USE_MEMORY_SCORE:
+            dv_list.insert(1, ('memory_score', '余韻'))
+        for base_col, base_lab in [('base_mood', '事前の気分'), ('base_arousal', '事前の興奮状態')]:
+            for dv_col, dv_lab in dv_list:
+                pair_b = long_df[[base_col, dv_col]].dropna()
+                if len(pair_b) > 2 and pair_b[base_col].nunique() > 1:
+                    r_b = pair_b.corr().loc[base_col, dv_col]
+                    print(f"    {base_lab} × {dv_lab}: r={r_b:.3f}")
+        print("    ※ ベースラインは参加者単位の値のため、試行単位の相関は")
+        print("       同一参加者のデータが繰り返し含まれる点に注意")
+
 # ============================================
 # Step7-2: demand認知チェック
 # ============================================
@@ -482,6 +607,12 @@ if len(long_df) > 0:
     print(f"\n  WTP最大値: {long_df['wtp'].max():.0f}円")
     print(f"  WTP最小値: {long_df['wtp'].min():.0f}円")
     print(f"  WTP中央値: {long_df['wtp'].median():.0f}円")
+
+    # 事前の感情測定（参加者単位）
+    if 'base_mood' in long_df.columns:
+        base_desc = long_df.groupby('participant_id')[['base_mood', 'base_arousal']].first()
+        print("\n  事前の感情測定（参加者単位）:")
+        print(base_desc.describe().loc[['mean', 'std', 'min', 'max']].to_string())
 
     # グループごとの人数（設計通り割り振れているかの確認）
     print("\n  グループごとの参加者数:")
@@ -551,6 +682,19 @@ if len(long_df) > 0:
             data = data.copy()
             data[dv] = np.log1p(data[dv])
 
+        # rm_anovaは全セルが揃った参加者のみで実行する必要がある
+        # WTPの欠損等で一部の試行が欠けた参加者は除外する
+        n_cells = data.groupby('participant_id').size()
+        complete_ids = n_cells[n_cells == 4].index
+        n_dropped = data['participant_id'].nunique() - len(complete_ids)
+        if n_dropped > 0:
+            print(f"  ※ 4条件が揃わない参加者{n_dropped}名をこの分析から除外（欠損のため）")
+        data = data[data['participant_id'].isin(complete_ids)]
+
+        if data['participant_id'].nunique() < 3:
+            print("  ⚠ 有効な参加者が3名未満のためANOVAを実行できません")
+            continue
+
         try:
             aov = pg.rm_anova(
                 data=data,
@@ -559,41 +703,45 @@ if len(long_df) > 0:
                 subject='participant_id',
                 detailed=True
             )
-            print(aov[['Source', 'F', 'p-unc', 'np2']].to_string(index=False))
+            # pingouinのバージョンによって列名が異なるため解決してから使う
+            p_col, e_col = resolve_aov_cols(aov)
+            show_cols = ['Source', 'F'] + [c for c in [p_col, e_col] if c]
+            print(aov[show_cols].to_string(index=False))
+            if e_col == 'ng2':
+                print("  ※ 効果量は一般化イータ二乗（ng2）")
 
             # Step1：音楽valenceの主効果（仮説の直接検証）
-            music_p = aov[aov['Source'] == 'music_valence']['p-unc'].values
-            if len(music_p) > 0:
+            music_p = get_source_p(aov, 'music_valence', p_col)
+            if music_p is not None:
                 pos_m = data[data['music_valence'] == 'pos'][dv].mean()
                 mel_m = data[data['music_valence'] == 'mel'][dv].mean()
-                sig = '*' if music_p[0] < 0.05 else 'n.s.'
-                print(f"\n  【Step1】音楽valenceの主効果: p={music_p[0]:.3f} {sig}")
+                sig = '*' if music_p < 0.05 else 'n.s.'
+                print(f"\n  【Step1】音楽valenceの主効果: p={music_p:.3f} {sig}")
                 print(f"    ポジ音楽 M={pos_m:.2f} vs メラ音楽 M={mel_m:.2f}")
 
             # Step2：映像valenceの主効果（副次的知見）
-            video_p = aov[aov['Source'] == 'video_valence']['p-unc'].values
-            if len(video_p) > 0:
+            video_p = get_source_p(aov, 'video_valence', p_col)
+            if video_p is not None:
                 pos_v = data[data['video_valence'] == 'pos'][dv].mean()
                 mel_v = data[data['video_valence'] == 'mel'][dv].mean()
-                sig = '*' if video_p[0] < 0.05 else 'n.s.'
-                print(f"\n  【Step2】映像valenceの主効果: p={video_p[0]:.3f} {sig}")
+                sig = '*' if video_p < 0.05 else 'n.s.'
+                print(f"\n  【Step2】映像valenceの主効果: p={video_p:.3f} {sig}")
                 print(f"    ポジ映像 M={pos_v:.2f} vs メラ映像 M={mel_v:.2f}")
 
             # Step3：交互作用（= congruencyの効果に相当）
-            interaction_p = aov[aov['Source'].str.contains(
-                'video_valence.*music_valence|music_valence.*video_valence')]['p-unc'].values
-            if len(interaction_p) > 0:
-                sig = '*' if interaction_p[0] < 0.05 else 'n.s.'
-                print(f"\n  【Step3】交互作用（映像valence × 音楽valence）: p={interaction_p[0]:.3f} {sig}")
+            interaction_p = get_interaction_p(aov, p_col)
+            if interaction_p is not None:
+                sig = '*' if interaction_p < 0.05 else 'n.s.'
+                print(f"\n  【Step3】交互作用（映像valence × 音楽valence）: p={interaction_p:.3f} {sig}")
 
                 # 参考：congruent / incongruent の平均
-                con_m = long_df[long_df['congruency'] == 'con'][dv].mean()
-                inc_m = long_df[long_df['congruency'] == 'inc'][dv].mean()
+                con_m = data[data['congruency'] == 'con'][dv].mean()
+                inc_m = data[data['congruency'] == 'inc'][dv].mean()
                 print(f"    参考 congruent M={con_m:.2f} vs incongruent M={inc_m:.2f}")
 
                 # Step4：交互作用が有意なら単純主効果（Bonferroni補正：α=0.025）
                 # 2回比較するため .05/2 = .025
-                if interaction_p[0] < 0.05:
+                if interaction_p < 0.05:
                     print(f"  → 音楽valenceの効果が映像valenceによって異なる可能性")
                     print(f"  【Step4】単純主効果（Bonferroni補正 α=0.025）")
                     print(f"  ※ 2種類の不調和（メラ映像×ポジ音楽／ポジ映像×メラ音楽）が")
