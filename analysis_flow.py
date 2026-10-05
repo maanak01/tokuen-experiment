@@ -1,7 +1,16 @@
 # ============================================
-# 特別演習I 分析フロー v15
+# 特別演習I 分析フロー v16
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
+# v16の変更点（10/5）
+#   1. 仮説の検証を「音楽valenceの主効果」から「交互作用（＝調和 vs 不調和）」に修正
+#      2×2の被験者内計画では、主効果はどちらも調和1条件・不調和1条件を含むため、
+#      調和の効果は主効果に現れない。v15までの Step1 はこれを取り違えていた。
+#   2. 交互作用を対応のあるt検定（調和平均−不調和平均）としても計算し、
+#      効果量 dz と95%信頼区間を出す（探索的研究として効果量と信頼区間を重視する方針）
+#   3. 単純主効果を「映像ごとに 調和 vs 不調和」の比較に整理（2種類の不調和を比べられる）
+#   4. 余韻を3項目別々に分析するとき、有意の判定もBonferroni補正（.017）で行うよう統一
+#
 # v15の変更点（9/27）
 #   1. 事前の感情測定（baseline mood / arousal）を追加
 #      - Step5 で participant単位の値として保持
@@ -710,54 +719,85 @@ if len(long_df) > 0:
             if e_col == 'ng2':
                 print("  ※ 効果量は一般化イータ二乗（ng2）")
 
-            # Step1：音楽valenceの主効果（仮説の直接検証）
+            # 有意水準：余韻を3項目別々に分析するときはBonferroni補正（.05/3）
+            ALPHA = 0.05 / 3 if dv in ('memory', 'mem_mood', 'mem_world') else 0.05
+
+            # ------------------------------------------------------------
+            # 【Step1】仮説の検証：交互作用（＝調和 vs 不調和）
+            # ------------------------------------------------------------
+            # 2×2の被験者内計画では、交互作用は「調和2条件 vs 不調和2条件」の対比と同じ。
+            #   調和  ＝ ポジ映像×ポジ音楽、メラ映像×メラ音楽
+            #   不調和＝ ポジ映像×メラ音楽、メラ映像×ポジ音楽
+            # 音楽・映像の主効果はどちらも調和1条件・不調和1条件を含むため、
+            # 調和の効果は主効果には現れない（v15まではここを取り違えていた）。
+            # 同じ検定を「参加者ごとの 調和平均 − 不調和平均」の対応のあるt検定として計算し、
+            # 効果量（dz）と95%信頼区間も出す。t² はANOVAの交互作用のFと一致する。
+            interaction_p = get_interaction_p(aov, p_col)
+            per = data.groupby(['participant_id', 'congruency'])[dv].mean().unstack()
+            d_ci = per['con'] - per['inc']
+            n_s = len(d_ci)
+            m_d, sd_d = d_ci.mean(), d_ci.std(ddof=1)
+            t_c = m_d / (sd_d / np.sqrt(n_s))
+            p_c = 2 * stats.t.sf(abs(t_c), n_s - 1)
+            dz = m_d / sd_d
+            half = stats.t.ppf(0.975, n_s - 1) * sd_d / np.sqrt(n_s)
+            print(f"\n  【Step1】仮説の検証：交互作用（＝調和 vs 不調和）")
+            if dv == 'wtp':
+                print("    ※ WTPの平均・差は対数変換後（log(WTP+1)）の値")
+            print(f"    調和 M={per['con'].mean():.2f} vs 不調和 M={per['inc'].mean():.2f}"
+                  f"（差 {m_d:+.2f}、95%CI [{m_d - half:+.2f}, {m_d + half:+.2f}]）")
+            print(f"    t({n_s - 1})={t_c:.2f}, p={p_c:.3f}, dz={dz:.2f}"
+                  f"　（ANOVAの交互作用 p={interaction_p:.3f}：同じ検定）")
+            if p_c < ALPHA and m_d > 0:
+                print(f"    → 仮説の方向（調和 > 不調和）に有意（α={ALPHA:.3f}）")
+            elif p_c < ALPHA and m_d < 0:
+                print(f"    → 仮説と逆の方向（不調和 > 調和）に有意（α={ALPHA:.3f}）")
+            else:
+                print(f"    → 有意差なし（α={ALPHA:.3f}）。探索的研究なので効果量と信頼区間で大きさを読む")
+
+            # ------------------------------------------------------------
+            # 【Step2】音楽valenceの主効果（副次的知見）
+            # ------------------------------------------------------------
             music_p = get_source_p(aov, 'music_valence', p_col)
             if music_p is not None:
                 pos_m = data[data['music_valence'] == 'pos'][dv].mean()
                 mel_m = data[data['music_valence'] == 'mel'][dv].mean()
-                sig = '*' if music_p < 0.05 else 'n.s.'
-                print(f"\n  【Step1】音楽valenceの主効果: p={music_p:.3f} {sig}")
+                sig = '*' if music_p < ALPHA else 'n.s.'
+                print(f"\n  【Step2】音楽valenceの主効果（副次的）: p={music_p:.3f} {sig}")
                 print(f"    ポジ音楽 M={pos_m:.2f} vs メラ音楽 M={mel_m:.2f}")
 
-            # Step2：映像valenceの主効果（副次的知見）
+            # ------------------------------------------------------------
+            # 【Step3】映像valenceの主効果（副次的知見）
+            # ------------------------------------------------------------
             video_p = get_source_p(aov, 'video_valence', p_col)
             if video_p is not None:
                 pos_v = data[data['video_valence'] == 'pos'][dv].mean()
                 mel_v = data[data['video_valence'] == 'mel'][dv].mean()
-                sig = '*' if video_p < 0.05 else 'n.s.'
-                print(f"\n  【Step2】映像valenceの主効果: p={video_p:.3f} {sig}")
+                sig = '*' if video_p < ALPHA else 'n.s.'
+                print(f"\n  【Step3】映像valenceの主効果（副次的）: p={video_p:.3f} {sig}")
                 print(f"    ポジ映像 M={pos_v:.2f} vs メラ映像 M={mel_v:.2f}")
 
-            # Step3：交互作用（= congruencyの効果に相当）
-            interaction_p = get_interaction_p(aov, p_col)
-            if interaction_p is not None:
-                sig = '*' if interaction_p < 0.05 else 'n.s.'
-                print(f"\n  【Step3】交互作用（映像valence × 音楽valence）: p={interaction_p:.3f} {sig}")
-
-                # 参考：congruent / incongruent の平均
-                con_m = data[data['congruency'] == 'con'][dv].mean()
-                inc_m = data[data['congruency'] == 'inc'][dv].mean()
-                print(f"    参考 congruent M={con_m:.2f} vs incongruent M={inc_m:.2f}")
-
-                # Step4：交互作用が有意なら単純主効果（Bonferroni補正：α=0.025）
-                # 2回比較するため .05/2 = .025
-                if interaction_p < 0.05:
-                    print(f"  → 音楽valenceの効果が映像valenceによって異なる可能性")
-                    print(f"  【Step4】単純主効果（Bonferroni補正 α=0.025）")
-                    print(f"  ※ 2種類の不調和（メラ映像×ポジ音楽／ポジ映像×メラ音楽）が")
-                    print(f"     同じ効果を持つとは限らない。差の大きさの違いに注目する")
-                    for vtype in ['pos', 'mel']:
-                        label_v = 'ポジティブ映像' if vtype == 'pos' else 'メランコリック映像'
-                        sub = data[data['video_valence'] == vtype]
-                        pos_mus = sub[sub['music_valence'] == 'pos'].set_index('participant_id')[dv]
-                        mel_mus = sub[sub['music_valence'] == 'mel'].set_index('participant_id')[dv]
-                        common = pos_mus.index.intersection(mel_mus.index)
-                        if len(common) > 1:
-                            t_stat, p_val = stats.ttest_rel(pos_mus[common], mel_mus[common])
-                            sig = '*' if p_val < 0.025 else 'n.s.'
-                            diff = pos_mus.mean() - mel_mus.mean()
-                            print(f"    {label_v}: ポジ音楽M={pos_mus.mean():.2f} vs メラ音楽M={mel_mus.mean():.2f}"
-                                  f" (差={diff:+.2f}), p={p_val:.3f} {sig}")
+            # ------------------------------------------------------------
+            # 【Step4】単純主効果：映像ごとに 調和 vs 不調和
+            # ------------------------------------------------------------
+            # 2回比較するのでBonferroni補正（ALPHA/2）。
+            # 2種類の不調和（ポジ映像×メラ音楽／メラ映像×ポジ音楽）が同じ効果を持つとは限らない。
+            # 交互作用が有意でないときは、記述的な参考として読む。
+            alpha_s = ALPHA / 2
+            note = '' if p_c < ALPHA else '（交互作用が有意でないため参考）'
+            print(f"\n  【Step4】単純主効果：映像ごとに 調和 vs 不調和（α={alpha_s:.3f}）{note}")
+            for vtype, label_v, con_mus in [('pos', 'ポジティブ映像', 'pos'), ('mel', 'メランコリック映像', 'mel')]:
+                sub = data[data['video_valence'] == vtype]
+                con_s = sub[sub['music_valence'] == con_mus].set_index('participant_id')[dv]
+                inc_s = sub[sub['music_valence'] != con_mus].set_index('participant_id')[dv]
+                common = con_s.index.intersection(inc_s.index)
+                if len(common) > 1:
+                    dd = con_s[common] - inc_s[common]
+                    t_s, p_s = stats.ttest_rel(con_s[common], inc_s[common])
+                    dz_s = dd.mean() / dd.std(ddof=1)
+                    sig = '*' if p_s < alpha_s else 'n.s.'
+                    print(f"    {label_v}: 調和 M={con_s[common].mean():.2f} vs 不調和 M={inc_s[common].mean():.2f}"
+                          f"（差 {dd.mean():+.2f}）, p={p_s:.3f} {sig}, dz={dz_s:.2f}")
 
         except Exception as e:
             print(f"  ANOVA実行エラー（データ不足の可能性）: {e}")
