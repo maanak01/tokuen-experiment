@@ -1,7 +1,20 @@
 # ============================================
-# 特別演習I 分析フロー v16
+# 特別演習I 分析フロー v17
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
+# v17の変更点（10/13）
+#   1. 気分を Affective Slider（0〜1）で3回測る形に対応
+#      実験前（事前の快不快・事前の覚醒）／映像の直後（無音）／音楽だけを30秒聞いた後
+#   2. 余韻を「映像で生じた気分が、音楽の間にどれだけ残ったか」として計算する
+#        余韻の残存率 ＝（音楽後 − 実験前）÷（映像直後 − 実験前）   ※快不快で計算
+#      映像で気分がほとんど動かなかった試行（|映像直後 − 実験前| < 0.05）は割り算が不安定なので除外
+#      不調和で気分が反対向きに振れた場合は負の値になる（「消えた」ではなく「上書きされた」と解釈）
+#   3. 余韻の残存率を仮説1の従属変数として Step10 に追加（交互作用＝調和 vs 不調和で検証）
+#   4. 操作チェック（Step7-0）を、Affective Slider による「実験前→映像直後」の変化で行う
+#   5. 覚醒は余韻の指標には使わず、音楽のテンポ・覚醒の交絡を確かめるために記述する
+#   6. 音楽だけを流した実際の秒数・音楽の再生失敗・音楽中のタブ離脱を確認する
+#   ※ 暫定の余韻3項目は、余韻の定義が決まるまで探索的に残している
+#
 # v16の変更点（10/5）
 #   1. 仮説の検証を「音楽valenceの主効果」から「交互作用（＝調和 vs 不調和）」に修正
 #      2×2の被験者内計画では、主効果はどちらも調和1条件・不調和1条件を含むため、
@@ -40,6 +53,9 @@ import matplotlib.pyplot as plt
 import japanize_matplotlib
 import jaconv
 import statsmodels.formula.api as smf
+
+# 余韻の残存率：映像で気分がこれ未満しか動かなかった試行は、割り算が不安定なので計算しない
+YOIN_MIN_INDUCED = 0.05   # 映像で気分がこれ未満しか動かなかった試行は残存率を計算しない
 
 # ============================================
 # Step1: データ読み込み
@@ -285,8 +301,9 @@ if len(df) > 0:
     group_col = group_col[0] if group_col else None
 
     # 事前の感情測定（実験開始前・参加者ごとに1つ）
-    base_mood_col = get_col(df, '今の気分')
-    base_aro_col  = get_col(df, '今の興奮状態')
+    # 事前の気分（Affective Slider：0〜1）
+    base_mood_col = get_col(df, '事前の快不快')
+    base_aro_col  = get_col(df, '事前の覚醒')
 
     for idx, row in df.iterrows():
         group = row.get(group_col, '') if group_col else ''
@@ -351,8 +368,28 @@ if len(df) > 0:
                 'base_arousal':   base_aro,
             }
             # 映像視聴後の評定とベースラインの差分（感情誘発の方向と大きさ）
-            record['vid_val_shift'] = (vid_val - base_mood) if pd.notna(vid_val) and pd.notna(base_mood) else np.nan
-            record['vid_aro_shift'] = (vid_aro - base_aro)  if pd.notna(vid_aro) and pd.notna(base_aro)  else np.nan
+            # ---- 気分（Affective Slider）：映像直後（無音）と、音楽だけを聞いた後 ----
+            m1p = row.get(get_trial_col(df, t, '映像直後の快不快'), np.nan)
+            m1a = row.get(get_trial_col(df, t, '映像直後の覚醒'), np.nan)
+            m2p = row.get(get_trial_col(df, t, '音楽後の快不快'), np.nan)
+            m2a = row.get(get_trial_col(df, t, '音楽後の覚醒'), np.nan)
+            record['mood1_p'], record['mood1_a'] = m1p, m1a
+            record['mood2_p'], record['mood2_a'] = m2p, m2a
+            record['music_only_sec'] = row.get(get_trial_col(df, t, '音楽だけの秒数'), np.nan)
+            record['hidden_music']   = row.get(get_trial_col(df, t, '音楽中のタブ離脱'), np.nan)
+
+            # 映像で動いた気分（実験前→映像直後）と、音楽の後に残った分（実験前→音楽後）
+            induced  = (m1p - base_mood) if pd.notna(m1p) and pd.notna(base_mood) else np.nan
+            retained = (m2p - base_mood) if pd.notna(m2p) and pd.notna(base_mood) else np.nan
+            record['induced_p']  = induced
+            record['retained_p'] = retained
+            # 余韻の残存率（映像で動いた分のうち、音楽の後にどれだけ残ったか）
+            if pd.notna(induced) and pd.notna(retained) and abs(induced) >= YOIN_MIN_INDUCED:
+                record['yoin_rate'] = retained / induced
+            else:
+                record['yoin_rate'] = np.nan
+            # 参考：割り算を使わない指標（映像で動いた向きに、どれだけ残ったか）
+            record['yoin_keep'] = (retained * np.sign(induced)) if pd.notna(induced) and pd.notna(retained) else np.nan
             record['purchase_intent'] = np.nanmean([buy, interest, nobuy_r])
             records.append(record)
 
@@ -414,37 +451,46 @@ if len(long_df) > 0:
 #   被験者内計画のため個人差はrm ANOVAで既に除去されており、
 #   N=24で共変量を入れると自由度を消費して検出力がさらに落ちるため。
 if len(long_df) > 0 and 'base_mood' in long_df.columns:
-    print("\nStep7-0: 事前の感情測定と感情誘発の確認")
+    print("\nStep7-0: 事前の気分と、映像による気分の誘導の確認（Affective Slider：0〜1）")
 
-    # ベースラインの記述統計（参加者単位）
     base = long_df.groupby('participant_id')[['base_mood', 'base_arousal']].first()
-    print(f"  事前の気分     : M={base['base_mood'].mean():.2f}, SD={base['base_mood'].std():.2f}, "
-          f"range={base['base_mood'].min():.0f}-{base['base_mood'].max():.0f}")
-    print(f"  事前の興奮状態 : M={base['base_arousal'].mean():.2f}, SD={base['base_arousal'].std():.2f}, "
-          f"range={base['base_arousal'].min():.0f}-{base['base_arousal'].max():.0f}")
+    print(f"  事前の快不快 : M={base['base_mood'].mean():.3f}, SD={base['base_mood'].std():.3f}")
+    print(f"  事前の覚醒   : M={base['base_arousal'].mean():.3f}, SD={base['base_arousal'].std():.3f}")
 
-    # 感情誘発の方向と大きさ（ベースラインからの変化量）
-    print("\n  映像視聴後のベースラインからの変化量:")
+    # 映像による誘導：実験前→映像直後の快不快の変化。ポジ映像で上がり、メラ映像で下がっているか
+    print("\n  映像による快不快の変化（実験前 → 映像直後）:")
+    shifts = {}
     for vtype, lab in [('pos', 'ポジティブ映像'), ('mel', 'メランコリック映像')]:
-        sub = long_df[long_df['video_valence'] == vtype]
-        dv_ = sub['vid_val_shift'].mean()
-        da_ = sub['vid_aro_shift'].mean()
-        print(f"    {lab}: valence {dv_:+.2f} / arousal {da_:+.2f}")
+        d = long_df[long_df['video_valence'] == vtype]['induced_p']
+        shifts[vtype] = d.mean()
+        print(f"    {lab}: {d.mean():+.3f}（SD {d.std():.3f}）")
+    if pd.notna(shifts.get('pos')) and pd.notna(shifts.get('mel')):
+        ok = shifts['pos'] > 0 and shifts['mel'] < 0
+        print(f"    → {'✅ 意図した方向に誘導できている' if ok else '⚠ 意図した方向に誘導できていない。limitationsに記載すること'}")
 
-    pos_shift = long_df[long_df['video_valence'] == 'pos']['vid_val_shift'].mean()
-    mel_shift = long_df[long_df['video_valence'] == 'mel']['vid_val_shift'].mean()
-    if pd.notna(pos_shift) and pd.notna(mel_shift):
-        ok_pos = pos_shift > 0
-        ok_mel = mel_shift < 0
-        print(f"\n    ポジ映像でvalence上昇: {'✅' if ok_pos else '⚠ 上昇していない'}")
-        print(f"    メラ映像でvalence下降: {'✅' if ok_mel else '⚠ 下降していない'}")
-        if ok_pos and ok_mel:
-            print("    → 感情誘発は意図した方向に働いたと考えられる")
-        else:
-            print("    → 感情誘発が意図通りでない可能性。limitationsに記載すること")
+    # 残存率を計算できなかった試行（映像で気分がほとんど動かなかった）
+    n_all = long_df['induced_p'].notna().sum()
+    n_small = (long_df['induced_p'].abs() < YOIN_MIN_INDUCED).sum()
+    print(f"\n  映像で気分がほぼ動かず（|変化| < {YOIN_MIN_INDUCED}）残存率を計算しなかった試行: {n_small} / {n_all}")
 
-    print("\n  ※ ベースラインは全試行で共通のため、条件間の比較には影響しない")
-    print("  ※ 差分は記述的な確認であり、統計的検定は行わない")
+    # 音楽だけを流した時間と、音楽中のタブ離脱（データの質の確認）
+    if 'music_only_sec' in long_df.columns:
+        mo = long_df['music_only_sec']
+        print(f"  音楽だけを流した実際の秒数: M={mo.mean():.1f}, 最小={mo.min():.1f}, 最大={mo.max():.1f}")
+        print(f"  音楽中にタブを離れた試行: {(long_df['hidden_music'] > 0).sum()}")
+
+    # 余韻の記述統計（条件ごと）
+    print("\n  余韻の残存率（条件ごと）:")
+    yd = long_df.groupby(['video_valence', 'music_valence', 'congruency'])['yoin_rate'].agg(['mean', 'std', 'count'])
+    print(yd.to_string())
+    print("  ※ 負の値：音楽の後に、映像と反対向きへ気分が振れた（音楽による上書き）")
+
+    # 覚醒は余韻の指標には使わず、交絡の確認用に記述する
+    print("\n  覚醒（交絡の確認用）：音楽だけを聞いた後の覚醒を、音楽valence別に")
+    for mtype, lab in [('pos', 'ポジティブ音楽'), ('mel', 'メランコリック音楽')]:
+        a = long_df[long_df['music_valence'] == mtype]['mood2_a']
+        print(f"    {lab}: M={a.mean():.3f}（SD {a.std():.3f}）")
+    print("  ※ ポジ音楽とメラ音楽で覚醒が大きく違う場合、valenceとテンポ・覚醒の交絡に注意")
 
 # ============================================
 # Step7: 操作チェック（valence/arousal）
@@ -542,7 +588,7 @@ if len(long_df) > 0:
         dv_list = [('purchase_intent', '購買意欲'), ('wtp', 'WTP')]
         if USE_MEMORY_SCORE:
             dv_list.insert(1, ('memory_score', '余韻'))
-        for base_col, base_lab in [('base_mood', '事前の気分'), ('base_arousal', '事前の興奮状態')]:
+        for base_col, base_lab in [('base_mood', '事前の快不快'), ('base_arousal', '事前の覚醒')]:
             for dv_col, dv_lab in dv_list:
                 pair_b = long_df[[base_col, dv_col]].dropna()
                 if len(pair_b) > 2 and pair_b[base_col].nunique() > 1:
@@ -663,12 +709,14 @@ print("\nStep10: 分析開始")
 
 if USE_MEMORY_SCORE:
     dvs = {
+        'yoin_rate':       '余韻（気分の残存率）※仮説1',
         'purchase_intent': '購買意欲',
         'memory_score':    '余韻持続（3問平均）',
         'wtp':             'WTP',
     }
 else:
     dvs = {
+        'yoin_rate':       '余韻（気分の残存率）※仮説1',
         'purchase_intent': '購買意欲',
         'memory':          '余韻（記憶）',
         'mem_mood':        '余韻（感情持続）',
