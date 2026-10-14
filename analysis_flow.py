@@ -1,7 +1,16 @@
 # ============================================
-# 特別演習I 分析フロー v17
+# 特別演習I 分析フロー v18
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
+# v18の変更点（10/13・ミーティング後）
+#   1. 余韻の暫定3項目を1問（「この映像の雰囲気がまだ続いている気がする」）に減らしたことに対応
+#      3問のデータがあれば従来どおりαで分岐し、1問だけなら「余韻の補助質問」として探索的に扱う
+#   2. 回答時間の分析を追加（藤崎先生の提案：不調和だと答えるのに迷うか）
+#      気分1回目は音楽の前に答えるので、調和・不調和の影響を受けないはず（比較の基準）
+#      気分2回目と余韻の質問で、不調和の方が時間がかかるかを見る
+#   3. 覚醒の交絡を探索的に確認（藤崎先生の提案：不調和で驚いて覚醒し、WTPが上がる人がいるかも）
+#      実験前の覚醒（眠い〜目が覚めている）を、疲れの代わりの統制変数として入れる
+#
 # v17の変更点（10/13）
 #   1. 気分を Affective Slider（0〜1）で3回測る形に対応
 #      実験前（事前の快不快・事前の覚醒）／映像の直後（無音）／音楽だけを30秒聞いた後
@@ -55,6 +64,7 @@ import jaconv
 import statsmodels.formula.api as smf
 
 # 余韻の残存率：映像で気分がこれ未満しか動かなかった試行は、割り算が不安定なので計算しない
+RT_MAX_SEC = 120   # これを超える回答時間は、画面を離れていた可能性が高いので除外
 YOIN_MIN_INDUCED = 0.05   # 映像で気分がこれ未満しか動かなかった試行は残存率を計算しない
 
 # ============================================
@@ -377,6 +387,10 @@ if len(df) > 0:
             record['mood2_p'], record['mood2_a'] = m2p, m2a
             record['music_only_sec'] = row.get(get_trial_col(df, t, '音楽だけの秒数'), np.nan)
             record['hidden_music']   = row.get(get_trial_col(df, t, '音楽中のタブ離脱'), np.nan)
+            # 回答時間（秒）
+            record['mood1_rt']      = row.get(get_trial_col(df, t, '気分1回目の回答秒数'), np.nan)
+            record['mood2_rt']      = row.get(get_trial_col(df, t, '気分2回目の回答秒数'), np.nan)
+            record['yoin_item_sec'] = row.get(get_trial_col(df, t, '余韻質問の回答秒数'), np.nan)
 
             # 映像で動いた気分（実験前→映像直後）と、音楽の後に残った分（実験前→音楽後）
             induced  = (m1p - base_mood) if pd.notna(m1p) and pd.notna(base_mood) else np.nan
@@ -398,6 +412,11 @@ print(f"\nStep5: ロング形式変換完了（{len(long_df)}行）")
 if len(long_df) > 0:
     print(f"  WTP欠損値数: {long_df['wtp'].isna().sum()}件")
 
+# 余韻の暫定3項目のデータがあるか（v18のアプリでは「雰囲気がまだ続いている」の1問だけ）
+YOIN_ITEMS_3 = bool(len(long_df) > 0 and long_df[['memory', 'mem_world']].notna().any().any())
+if len(long_df) > 0:
+    print(f"\n余韻の質問：{'3問（従来の形式）' if YOIN_ITEMS_3 else '1問（補助の質問として探索的に扱う）'}")
+
 # ============================================
 # Step6: Cronbach's α
 # ============================================
@@ -418,7 +437,9 @@ if len(long_df) > 0:
 
     # 余韻のα
     mem_alpha_data = long_df[['memory', 'mem_mood', 'mem_world']].dropna()
-    if len(mem_alpha_data) > 2:
+    if not YOIN_ITEMS_3:
+        print("\n       余韻の補助質問は1問のためαは計算しない")
+    if YOIN_ITEMS_3 and len(mem_alpha_data) > 2:
         mem_alpha_val, _ = pg.cronbach_alpha(data=mem_alpha_data)
         print(f"\n       余韻 Cronbach's α = {mem_alpha_val:.3f}（目安 ≥ {MEMORY_ALPHA_THRESHOLD}）")
         print("  項目を1つ除外したときのα:")
@@ -557,7 +578,17 @@ if len(long_df) > 0:
 
     mem_col = 'memory_score' if USE_MEMORY_SCORE else None
 
-    if mem_col:
+    # 余韻の主な指標（スライダーの残存率）と補助の質問を、購買意欲・WTPと並べる
+    for ycol, ylab in [('yoin_rate', '余韻（気分の残存率）'), ('mem_mood', '余韻の補助質問')]:
+        for pcol, plab in [('purchase_intent', '購買意欲'), ('wtp', 'WTP')]:
+            if ycol in long_df.columns:
+                pair = long_df[[ycol, pcol]].dropna()
+                if len(pair) > 2:
+                    print(f"  {ylab} × {plab}: r={pair.corr().loc[ycol, pcol]:.3f}（n={len(pair)}試行）")
+
+    if not YOIN_ITEMS_3:
+        pass
+    elif mem_col:
         pair = long_df[[mem_col, 'purchase_intent']].dropna()
         if len(pair) > 2:
             r_mp = pair.corr().loc[mem_col, 'purchase_intent']
@@ -707,7 +738,14 @@ if len(long_df) > 0:
 # ============================================
 print("\nStep10: 分析開始")
 
-if USE_MEMORY_SCORE:
+if not YOIN_ITEMS_3:
+    dvs = {
+        'yoin_rate':       '余韻（気分の残存率）※仮説1',
+        'purchase_intent': '購買意欲 ※仮説2',
+        'wtp':             'WTP ※仮説2',
+        'mem_mood':        '余韻の補助質問（映像の雰囲気がまだ続いている）※探索的',
+    }
+elif USE_MEMORY_SCORE:
     dvs = {
         'yoin_rate':       '余韻（気分の残存率）※仮説1',
         'purchase_intent': '購買意欲',
@@ -768,7 +806,7 @@ if len(long_df) > 0:
                 print("  ※ 効果量は一般化イータ二乗（ng2）")
 
             # 有意水準：余韻を3項目別々に分析するときはBonferroni補正（.05/3）
-            ALPHA = 0.05 / 3 if dv in ('memory', 'mem_mood', 'mem_world') else 0.05
+            ALPHA = 0.05 / 3 if (YOIN_ITEMS_3 and not USE_MEMORY_SCORE and dv in ('memory', 'mem_mood', 'mem_world')) else 0.05
 
             # ------------------------------------------------------------
             # 【Step1】仮説の検証：交互作用（＝調和 vs 不調和）
@@ -849,6 +887,84 @@ if len(long_df) > 0:
 
         except Exception as e:
             print(f"  ANOVA実行エラー（データ不足の可能性）: {e}")
+
+# ============================================
+# Step10-2: 回答時間（探索的・藤崎先生の提案）
+# ============================================
+# 不調和だと答えるのに迷い（葛藤）が生じ、時間がかかるかを見る。
+# 比較の基準として、音楽の前に答える気分1回目も同じように比べる。
+#   気分1回目：音楽の前 → 調和・不調和で差がないはず
+#   気分2回目・余韻の質問：音楽の後 → 不調和の方が長ければ「迷い」の解釈と整合
+# 回答時間は右に歪むので対数にし、RT_MAX_SEC を超えるもの（画面を離れていた可能性）は除外する。
+
+def congruency_contrast(df_, col):
+    """参加者ごとの 調和平均 − 不調和平均 の対応のあるt検定（効果量dz・95%CIつき）"""
+    per = df_.groupby(['participant_id', 'congruency'])[col].mean().unstack().dropna()
+    if len(per) < 3 or 'con' not in per or 'inc' not in per:
+        return None
+    d = per['con'] - per['inc']
+    n = len(d); m = d.mean(); sd = d.std(ddof=1)
+    t_ = m / (sd / np.sqrt(n)); p_ = 2 * stats.t.sf(abs(t_), n - 1)
+    half = stats.t.ppf(0.975, n - 1) * sd / np.sqrt(n)
+    return dict(n=n, con=per['con'].mean(), inc=per['inc'].mean(), m=m, lo=m - half, hi=m + half, t=t_, p=p_, dz=m / sd)
+
+if len(long_df) > 0 and 'mood2_rt' in long_df.columns:
+    print("\nStep10-2: 回答時間（探索的）")
+    rt = long_df.copy()
+    for col in ['mood1_rt', 'mood2_rt', 'yoin_item_sec']:
+        bad = (rt[col] <= 0) | (rt[col] > RT_MAX_SEC)
+        if bad.sum() > 0:
+            print(f"  {col}: {RT_MAX_SEC}秒を超える等の {int(bad.sum())} 試行を除外")
+        rt.loc[bad, col] = np.nan
+        rt[col + '_log'] = np.log(rt[col])
+
+    print("  ※ 値は対数（秒）。差がマイナス＝不調和の方が時間がかかった")
+    for col, lab in [('mood1_rt_log', '気分1回目（音楽の前・比較の基準）'),
+                     ('mood2_rt_log', '気分2回目（音楽の後）'),
+                     ('yoin_item_sec_log', '余韻の質問')]:
+        r = congruency_contrast(rt, col)
+        if r:
+            sig = '*' if r['p'] < 0.05 else 'n.s.'
+            print(f"    {lab}: 調和 {np.exp(r['con']):.1f}秒 vs 不調和 {np.exp(r['inc']):.1f}秒"
+                  f"（対数の差 {r['m']:+.3f}、95%CI [{r['lo']:+.3f}, {r['hi']:+.3f}]）, p={r['p']:.3f} {sig}, dz={r['dz']:.2f}")
+    print("  → 気分1回目に差がなく、音楽の後だけ不調和が長ければ「不調和で迷いが生じた」解釈と整合")
+
+    # 迷いが支払意思額を下げたか（探索的）
+    try:
+        w = rt[['participant_id', 'wtp', 'mood2_rt_log', 'congruency']].dropna().copy()
+        w['wtp_log'] = np.log1p(w['wtp'])
+        w['congruency_num'] = (w['congruency'] == 'con').astype(int)
+        w['rt_c'] = w['mood2_rt_log'] - w.groupby('participant_id')['mood2_rt_log'].transform('mean')  # 参加者内で中心化
+        res = smf.mixedlm("wtp_log ~ rt_c + congruency_num", data=w, groups=w['participant_id']).fit(reml=True)
+        b, p_ = res.params.get('rt_c', np.nan), res.pvalues.get('rt_c', np.nan)
+        print(f"\n  気分2回目の回答時間 → WTP（混合効果モデル、参加者内で中心化）: 係数={b:+.3f}, p={p_:.3f}")
+        print("  → 係数がマイナス：その人の中で迷った試行ほどWTPが低い")
+    except Exception as e:
+        print(f"  回答時間とWTPのモデルを実行できませんでした: {e}")
+
+# ============================================
+# Step10-3: 覚醒の交絡（探索的・藤崎先生の提案）
+# ============================================
+# 不調和で驚いて覚醒が上がり、目が覚めてWTPが上がる人がいるかもしれない。
+# 「余韻で値段が上がる」経路と「覚醒で値段が上がる」経路を区別するため、
+# 音楽後の覚醒をモデルに入れ、実験前の覚醒（眠い〜目が覚めている）を疲れの代わりに統制する。
+if len(long_df) > 0 and 'mood2_a' in long_df.columns:
+    print("\nStep10-3: 覚醒の交絡（探索的）")
+    try:
+        a = long_df[['participant_id', 'wtp', 'congruency', 'mood2_a', 'base_arousal']].dropna().copy()
+        a['wtp_log'] = np.log1p(a['wtp'])
+        a['congruency_num'] = (a['congruency'] == 'con').astype(int)
+        a['aro_c'] = a['mood2_a'] - a.groupby('participant_id')['mood2_a'].transform('mean')
+        a['base_c'] = a['base_arousal'] - a['base_arousal'].mean()
+        res = smf.mixedlm("wtp_log ~ congruency_num + aro_c + base_c", data=a, groups=a['participant_id']).fit(reml=True)
+        for term, lab in [('congruency_num', '調和（1）vs 不調和（0）'),
+                          ('aro_c', '音楽後の覚醒（参加者内で中心化）'),
+                          ('base_c', '実験前の覚醒（疲れの代わり）')]:
+            print(f"    {lab}: 係数={res.params.get(term, np.nan):+.3f}, p={res.pvalues.get(term, np.nan):.3f}")
+        print("  → 覚醒を入れても調和の係数が残れば、調和の効果は覚醒だけでは説明できない")
+        print("  ※ 疲れの測り方は未確定。実験前の覚醒で代用できるかは文献を確認して判断する")
+    except Exception as e:
+        print(f"  覚醒のモデルを実行できませんでした: {e}")
 
 # ============================================
 # Step11: 可視化（変換前スコアで表示）
