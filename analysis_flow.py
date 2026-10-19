@@ -1,7 +1,18 @@
 # ============================================
-# 特別演習I 分析フロー v18
+# 特別演習I 分析フロー v19
 # 映像valence(2) × 音楽valence(2) Two-way repeated measures ANOVA
 # ============================================
+# v19の変更点（10/15）
+#   頑健性の確認を、すべての従属変数で常に報告するようにした（結果を見てから方法を選ばないため）
+#   1. 正規性は、生の得点ではなく参加者ごとの差の得点（調和平均 − 不調和平均）で確認する
+#      （反復測定の分析で正規性が問題になるのは差の得点の分布だから）
+#   2. 差の得点にウィルコクソンの符号順位検定（効果量：マッチドペアの順位双列相関 r）
+#      2×2の被験者内計画では、これが交互作用（＝調和 vs 不調和）のノンパラメトリックな検定になる
+#   3. ART（Aligned Rank Transform; Wobbrock et al., 2011）による2×2の反復測定分散分析
+#      主効果2つと交互作用を、正規性を仮定せずに検定する
+#   4. 主な分析（反復測定分散分析・対応のあるt検定）と、2つの頑健な方法で結論が一致したかを表示
+#   ※ 主に報告するのは反復測定分散分析と対応のあるt検定。頑健性の確認は常に併記する（事前に決めた規則）
+#
 # v18の変更点（10/13・ミーティング後）
 #   1. 余韻の暫定3項目を1問（「この映像の雰囲気がまだ続いている気がする」）に減らしたことに対応
 #      3問のデータがあれば従来どおりαで分岐し、1問だけなら「余韻の補助質問」として探索的に扱う
@@ -734,6 +745,51 @@ if len(long_df) > 0:
     print("\nStep9: 分布確認グラフ保存 → distributions.png")
 
 # ============================================
+# 頑健性の確認に使う関数
+# ============================================
+def art_rm_2x2(df_, dv, subj='participant_id', a='video_valence', b='music_valence'):
+    """ART（Aligned Rank Transform; Wobbrock et al., 2011）による2×2の反復測定分散分析。
+    効果ごとに「残差＋その効果の推定値」で整列させてから順位に変換し、
+    順位で反復測定分散分析を行って、整列させた効果だけを読む。
+    戻り値：{効果名: (F, p, 整列の確認値)}。
+    整列の確認（ARToolと同じ方法）：順位に変換する前の整列値で分散分析をすると、
+    整列させていない効果のFはほぼ0になるはず。0から離れていれば整列が正しく効いていない"""
+    d = df_[[subj, a, b, dv]].dropna().copy()
+    gm = d[dv].mean()
+    cell = d.groupby([a, b])[dv].transform('mean')
+    ma = d.groupby(a)[dv].transform('mean')
+    mb = d.groupby(b)[dv].transform('mean')
+    resid = d[dv] - cell
+    est = {'A': ma - gm, 'B': mb - gm, 'AB': cell - ma - mb + gm}
+    out = {}
+    def rows_of(aov_):
+        src = aov_['Source'].astype(str)
+        return {'A': aov_[src == a], 'B': aov_[src == b], 'AB': aov_[src.str.contains(r'\*')]}
+    for key, e in est.items():
+        # 整列の確認：順位にする前の整列値で、整列させていない効果のFを見る
+        d['_aligned'] = resid + e
+        chk_rows = rows_of(pg.rm_anova(data=d, dv='_aligned', within=[a, b], subject=subj, detailed=True))
+        chk = max((float(chk_rows[k]['F'].iloc[0]) for k in chk_rows if k != key and len(chk_rows[k])), default=np.nan)
+        # 本体：整列値を順位に変換して反復測定分散分析し、整列させた効果だけを読む
+        d['_rank'] = d['_aligned'].rank(method='average')
+        aov_ = pg.rm_anova(data=d, dv='_rank', within=[a, b], subject=subj, detailed=True)
+        pcol_, _ = resolve_aov_cols(aov_)
+        tgt = rows_of(aov_)[key]
+        out[key] = (float(tgt['F'].iloc[0]), float(tgt[pcol_].iloc[0]), chk)
+    return out
+
+def wilcoxon_diff(diff):
+    """差の得点へのウィルコクソンの符号順位検定。効果量はマッチドペアの順位双列相関 r"""
+    d = pd.Series(diff).dropna()
+    d = d[d != 0]
+    if len(d) < 3:
+        return None
+    w = stats.wilcoxon(d)
+    ranks = d.abs().rank(method='average')
+    r_plus, r_minus = ranks[d > 0].sum(), ranks[d < 0].sum()
+    return dict(W=float(w.statistic), p=float(w.pvalue), r=float((r_plus - r_minus) / (r_plus + r_minus)), n=len(d))
+
+# ============================================
 # Step10: 分析
 # ============================================
 print("\nStep10: 分析開始")
@@ -840,6 +896,43 @@ if len(long_df) > 0:
                 print(f"    → 仮説と逆の方向（不調和 > 調和）に有意（α={ALPHA:.3f}）")
             else:
                 print(f"    → 有意差なし（α={ALPHA:.3f}）。探索的研究なので効果量と信頼区間で大きさを読む")
+
+            # ------------------------------------------------------------
+            # 【頑健性の確認】正規性を仮定しない方法でも結論が変わらないか（常に報告する）
+            # ------------------------------------------------------------
+            print(f"\n  【頑健性の確認】")
+            # 1. 差の得点の正規性（反復測定で問題になるのは差の得点の分布）
+            if len(d_ci) >= 3:
+                sw = stats.shapiro(d_ci)
+                skew = stats.skew(d_ci)
+                print(f"    差の得点の正規性：Shapiro-Wilk W={sw.statistic:.3f}, p={sw.pvalue:.3f}／歪度={skew:+.2f}"
+                      f"{'（正規分布から外れている可能性）' if sw.pvalue < .05 else ''}")
+            # 2. ウィルコクソンの符号順位検定（＝交互作用のノンパラメトリックな検定）
+            wres = wilcoxon_diff(d_ci)
+            if wres:
+                print(f"    ウィルコクソンの符号順位検定：W={wres['W']:.1f}, p={wres['p']:.3f}, r={wres['r']:+.2f}（n={wres['n']}）")
+            # 3. ART による2×2の反復測定分散分析
+            try:
+                art = art_rm_2x2(data, dv)
+                lab = {'A': '映像valenceの主効果', 'B': '音楽valenceの主効果', 'AB': '交互作用（＝調和 vs 不調和）'}
+                for k in ['AB', 'B', 'A']:
+                    F_, p_, chk = art[k]
+                    print(f"    ART {lab[k]}：F={F_:.2f}, p={p_:.3f}{'  *' if p_ < ALPHA else ''}")
+                worst = max(v[2] for v in art.values())
+                if not (worst < 1e-6):
+                    print(f"    ⚠ ARTの整列の確認：整列させていない効果のFが0になっていない（最大{worst:.4f}）。データの欠けや計算を確認すること")
+            except Exception as e:
+                art = None
+                print(f"    ART を実行できませんでした: {e}")
+            # 4. 結論が一致したか
+            verdicts = {'主な分析（t検定）': p_c < ALPHA}
+            if wres: verdicts['ウィルコクソン'] = wres['p'] < ALPHA
+            if art: verdicts['ART'] = art['AB'][1] < ALPHA
+            if len(set(verdicts.values())) == 1:
+                print(f"    → 3つの方法で結論は一致（{'有意' if p_c < ALPHA else '有意でない'}）")
+            else:
+                detail = '、'.join(f"{k}：{'有意' if v else '有意でない'}" for k, v in verdicts.items())
+                print(f"    → 方法によって結論が分かれた（{detail}）。報告では全部を示し、慎重に解釈する")
 
             # ------------------------------------------------------------
             # 【Step2】音楽valenceの主効果（副次的知見）
